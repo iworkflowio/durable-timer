@@ -1,2 +1,2 @@
 # durable-timer
-A distributed and highly scalable durable timer service
+A highly scalable, distributed and highly scalable durable timer service

@@ -11,35 +11,42 @@
 - Alternative options considered
 - Impact and status
 
-### 2. Code Quality Standards
+### 2. Requirements Adherence
+**Rule**: Strictly implement only what is explicitly specified in the requirements document. Do not add features, endpoints, or functionality that are not clearly stated in the requirements, even if they seem like "obvious" additions or improvements.
+- Only build what is documented in REQUIREMENTS.md
+- If additional features are needed, first update the requirements document
+- Avoid scope creep and feature assumptions
+- When in doubt, ask for clarification rather than assuming intent
+
+### 3. Code Quality Standards
 - Follow language-specific best practices and conventions
 - Write comprehensive tests (unit, integration, and end-to-end)
 - Document all public APIs and interfaces
 - Use meaningful variable and function names
 - Include error handling for all failure scenarios
 
-### 3. Distributed Systems Principles
+### 4. Distributed Systems Principles
 - Design for failure - assume components will fail
 - Implement proper retry mechanisms with exponential backoff
 - Ensure idempotency for all operations
-- Design for horizontal scalability
+- Design for horizontal scaling by adding more shards and service instances
 - Implement proper monitoring and observability
 
-### 4. SDK Design Principles
+### 5. SDK Design Principles
 - Provide simple, intuitive APIs
 - Support multiple programming languages
 - Include comprehensive documentation and examples
 - Handle connection failures gracefully
 - Provide both synchronous and asynchronous interfaces
 
-### 5. Documentation Requirements
+### 6. Documentation Requirements
 - Maintain up-to-date README with setup instructions
 - Document API specifications (OpenAPI/Swagger)
 - Provide getting started guides and tutorials
 - Include performance benchmarks and limitations
 - Document deployment and operational procedures
 
-### 6. Performance Standards
+### 7. Performance Standards
 - Optimize for both throughput and latency
 - Support graceful degradation under load
 - Benchmark against realistic workloads

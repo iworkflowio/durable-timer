@@ -9,19 +9,17 @@ This document defines the requirements for building a distributed, durable timer
 
 ### 1.1 Core Timer Operations
 - **FR-1.1**: Create one-time timers that execute a callback once at a specified future time
-- **FR-1.2**: Timer will include an ID to dedup & lookup, and a payload to store custom data
-- **FR-1.3**: Cancel existing timers before they execute
-- **FR-1.4**: Modify existing timers (change execution time, callback, or payload)
-- **FR-1.5**: Query timer status and remaining time until execution
+- **FR-1.2**: Timer will include an ID to dedup & lookup, callback url, and a payload to store custom data
+- **FR-1.3**: Delete existing timers before they execute
+- **FR-1.4**: Update existing timers (change execution time, callback, or payload)
+- **FR-1.5**: Query timer status and detailed infomation
 
 ### 1.2 Callback Execution
 - **FR-2.1**: Support HTTP webhook callbacks, with configurable timeout
 - **FR-2.2**: Include timer Id and payload
 - **FR-2.3**: Provide configurable retry policies
-- **FR-2.4**: Support returning to update schedule
+- **FR-2.4**: Callback can return to update schedule(and other info) for next callback
 
-### 1.3 Timer Precision
-- **FR-3.1**: Support timer precision to seconds
 
 ---
 
@@ -31,10 +29,11 @@ This document defines the requirements for building a distributed, durable timer
 - **NFR-1.1**: Achieve 99.9% uptime SLA
 - **NFR-1.2**: Guarantee at-least-once delivery semantics for timer callbacks
 - **NFR-1.3**: Handle node failures without losing timer state
+- **NFR-1.4**: Support timer precision to seconds
 
 ### 2.2 Performance and Scalability
 - **NFR-2.1**: Support thousands of millions of concurrent active timers
-- **NFR-2.2**: Handle 10,000+ timer creations per second
+- **NFR-2.2**: Handle 1,000,000+ timer creations and executions per second
 - **NFR-2.3**: Execute timers within ±1 second of scheduled time for sub-minute precision
 - **NFR-2.4**: Support horizontal scaling by adding more shards and service instances
 

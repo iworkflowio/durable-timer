@@ -1,0 +1,422 @@
+openapi: 3.0.3
+info:
+  title: Distributed Durable Timer Service API
+  description: |
+    A distributed, durable timer service that can schedule and execute HTTP webhook callbacks 
+    at specified times with high reliability and scalability.
+    
+    ## Features
+    - Create one-time timers with custom payloads
+    - Durable persistence across service restarts
+    - At-least-once delivery semantics
+    - Configurable retry policies and timeouts
+    - Timer modification and cancellation
+    - Callback response can update timer schedule
+    
+  version: 1.0.0
+  contact:
+    name: Timer Service Team
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+  - url: https://timer-service.example.com/api/v1
+    description: Production server
+
+paths:
+  /timers:
+    post:
+      summary: Create a new timer
+      description: |
+        Creates a new one-time timer that will execute an HTTP callback at the specified time.
+        Timer IDs are used for deduplication - creating a timer with an existing ID will return the existing timer.
+      operationId: createTimer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTimerRequest'
+            examples:
+              simple_timer:
+                summary: Simple timer example
+                value:
+                  id: "user-notification-123"
+                  executeAt: "2024-12-20T15:30:00Z"
+                  callbackUrl: "https://api.example.com/webhooks/timer"
+                  payload:
+                    userId: "user123"
+                    action: "send_reminder"
+                    message: "Don't forget about your meeting!"
+              complex_timer:
+                summary: Timer with custom retry policy
+                value:
+                  id: "payment-retry-456"
+                  groupId: "xlarge-scale-group"
+                  executeAt: "2024-12-20T10:00:00Z"
+                  callbackUrl: "https://payment.example.com/process"
+                  payload:
+                    orderId: "order-789"
+                    amount: 99.99
+                    currency: "USD"
+                  retryPolicy:
+                    maxRetries: 3
+                    backoffMultiplier: 2.0
+                    initialInterval: "30s"
+                  callbackTimeout: "10s"
+      responses:
+        '200':
+          description: Timer created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Timer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/AlreadyExists'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /timers/{groupId}/{timerId}:
+    get:
+      summary: Get timer status and detailed information
+      description: Query timer status and detailed information as specified in FR-1.5
+      operationId: getTimer
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/TimerId'
+      responses:
+        '200':
+          description: Timer details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Timer'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      summary: Update an existing timer
+      description: |
+        Update a timer's execution time, callback URL, or payload. 
+        Only pending timers can be updated.
+      operationId: updateTimer
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/TimerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTimerRequest'
+            examples:
+              update_time:
+                summary: Update execution time
+                value:
+                  executeAt: "2024-12-21T15:30:00Z"
+              update_payload:
+                summary: Update payload
+                value:
+                  payload:
+                    userId: "user456"
+                    action: "send_reminder"
+                    message: "Updated reminder message"
+      responses:
+        '200':
+          description: Timer updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Timer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      summary: Delete a timer
+      description: |
+        Cancel and delete a timer. Only pending timers can be deleted.
+        Once deleted, the timer will not execute its callback.
+      operationId: deleteTimer
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/TimerId'
+      responses:
+        '204':
+          description: Timer deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  parameters:
+    TimerId:
+      name: timerId
+      in: path
+      required: true
+      description: Unique identifier for the timer
+      schema:
+        type: string
+        example: "user-notification-123"
+    GroupId:
+      name: groupId
+      in: path
+      required: true
+      description: Group identifier for the timer. It is used for scalability. Must be one of the groupIds enabled in the system. Must be provided in read/write operation requests for lookup.
+      schema:
+        type: string
+        default: "default"
+        example: "xlarge-scale-group"
+
+  schemas:
+    CreateTimerRequest:
+      type: object
+      required:
+        - id
+        - executeAt
+        - callbackUrl
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the timer (used for deduplication)
+          example: "user-notification-123"
+          maxLength: 255
+        groupId:
+          type: string
+          description: Group identifier for the timer. It is used for scalability. Must be one of the groupIds enabled in the system. Must be provided in read/write operation requests for lookup.
+          default: "default"
+          example: "xlarge-scale-group"
+        executeAt:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp when the timer should execute
+          example: "2024-12-20T15:30:00Z"
+        callbackUrl:
+          type: string
+          format: uri
+          description: HTTP URL to call when the timer executes, returning 200 with CallbackResponse means success, otherwise will be retried.
+          example: "https://api.example.com/webhooks/timer"
+          maxLength: 2048
+        payload:
+          type: object
+          description: Custom JSON payload to include in the callback
+          example:
+            userId: "user123"
+            action: "send_reminder"
+        retryPolicy:
+          $ref: '#/components/schemas/RetryPolicy'
+        callbackTimeout:
+          type: string
+          description: Timeout for the HTTP callback (e.g., "30s", "5m")
+          default: "30s"
+          example: "10s"
+
+    CallbackResponse:      
+      type: object
+      required:
+        - ok
+      properties:
+        ok: 
+          type: boolean
+          description: Whether the callback is successful. If false, the timer will be retried (same as not returning 200).
+        nextExecuteAt:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp when the timer should execute next time. Only valid when ok is false.
+          example: "2024-12-20T15:30:00Z"
+
+    UpdateTimerRequest:
+      type: object
+      properties:
+        executeAt:
+          type: string
+          format: date-time
+          description: New execution time for the timer
+          example: "2024-12-21T15:30:00Z"
+        callbackUrl:
+          type: string
+          format: uri
+          description: New callback URL, returning 200 with CallbackResponse means success, otherwise will be retried.
+          example: "https://api.example.com/webhooks/timer-updated"
+          maxLength: 2048
+        payload:
+          type: object
+          description: New payload data
+        retryPolicy:
+          $ref: '#/components/schemas/RetryPolicy'
+        callbackTimeout:
+          type: string
+          description: New timeout for the HTTP callback
+          example: "15s"
+
+    Timer:
+      type: object
+      required:
+        - id
+        - groupId
+        - executeAt
+        - callbackUrl
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the timer
+          example: "user-notification-123"
+        groupId:
+          type: string
+          description: Group identifier for the timer. It is used for scalability. Must be one of the groupIds enabled in the system. Must be provided in read/write operation requests for lookup.
+          example: "xlarge-scale-group"
+        executeAt:
+          type: string
+          format: date-time
+          description: When the timer is scheduled to execute
+          example: "2024-12-20T15:30:00Z"
+        callbackUrl:
+          type: string
+          format: uri
+          description: HTTP URL to call when executing, returning 200 with CallbackResponse means success, otherwise will be retried.
+          example: "https://api.example.com/webhooks/timer"
+        payload:
+          type: object
+          description: Custom payload data
+          example:
+            userId: "user123"
+            action: "send_reminder"
+        retryPolicy:
+          $ref: '#/components/schemas/RetryPolicy'
+        callbackTimeout:
+          type: string
+          description: Timeout for the HTTP callback
+          example: "30s"
+        createdAt:
+          type: string
+          format: date-time
+          description: When the timer was created
+          example: "2024-12-19T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: When the timer was last updated
+          example: "2024-12-19T10:00:00Z"
+        executedAt:
+          type: string
+          format: date-time
+          description: When the timer was executed (if applicable)
+          example: "2024-12-20T15:30:05Z"
+
+    RetryPolicy:
+      type: object
+      properties:
+        maxRetries:
+          type: integer
+          minimum: 0
+          maximum: 10
+          default: 3
+          description: Maximum number of retry attempts
+          example: 3
+        maxRetryAttemptsDuration:
+          type: string
+          default: "24h"
+          description: the total duration of retry attempts
+          example: "1h"
+        initialInterval:
+          type: string
+          default: "30s"
+          description: Initial retry interval (e.g., "30s", "1m")
+          example: "30s"
+        backoffMultiplier:
+          type: number
+          minimum: 1.0
+          maximum: 10.0
+          default: 2.0
+          description: Multiplier for exponential backoff
+          example: 2.0
+        maxInterval:
+          type: string
+          default: "10m"
+          description: Maximum retry interval
+          example: "5m"
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error code
+          example: "TIMER_NOT_FOUND"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Timer with ID 'user-notification-123' not found"
+        details:
+          type: object
+          description: Additional error details
+        timestamp:
+          type: string
+          format: date-time
+          description: When the error occurred
+          example: "2024-12-19T10:15:30Z"
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid input parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "INVALID_INPUT"
+            message: "executeAt must be a future timestamp"
+            timestamp: "2024-12-19T10:15:30Z"
+
+    AlreadyExists:
+      description: Timer already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Timer'
+          example:
+            id: "user-notification-123"
+            executeAt: "2024-12-20T15:30:00Z"
+            callbackUrl: "https://api.example.com/webhooks/timer"
+            payload:
+              userId: "user123"
+              action: "send_reminder"
+              message: "Don't forget about your meeting!"
+
+    NotFound:
+      description: Timer not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "TIMER_NOT_FOUND"
+            message: "Timer with ID 'user-notification-123' not found"
+            timestamp: "2024-12-19T10:15:30Z"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "INTERNAL_ERROR"
+            message: "An unexpected error occurred"
+            timestamp: "2024-12-19T10:15:30Z"
