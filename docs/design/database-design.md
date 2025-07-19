@@ -483,6 +483,250 @@ WHERE shard_id = ? AND timer_id = ?;
 - **Cost Comparison**: LSI is significantly more cost-effective for write-heavy workloads since writes don't consume additional capacity. GSI incurs additional costs for every write operation that affects the index.
 - **Design Choice**: We use LSI with `shardId` as partition key to minimize costs. The 10GB partition limit is managed through administrative controls - when a partition approaches the limit, system administrators can create new groups with higher shard counts to redistribute the load. For customers requiring unlimited partition storage, GSI support can be offered as a premium feature with higher DynamoDB costs.
 
+## Traditional SQL Databases
+
+While the distributed databases above provide native sharding and horizontal scaling, traditional SQL databases can also support the timer service with appropriate configuration and potentially external sharding mechanisms.
+
+### MySQL
+
+**Table Definition**:
+```sql
+CREATE TABLE timers (
+    shard_id INT NOT NULL,
+    execute_at TIMESTAMP(3) NOT NULL,
+    timer_id VARCHAR(255) NOT NULL,
+    group_id VARCHAR(255) NOT NULL,
+    callback_url VARCHAR(2048) NOT NULL,
+    payload JSON,
+    retry_policy JSON,
+    callback_timeout VARCHAR(32) DEFAULT '30s',
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    executed_at TIMESTAMP(3) NULL,
+    PRIMARY KEY (shard_id, execute_at, timer_id),
+    INDEX idx_timer_lookup (shard_id, timer_id)
+) PARTITION BY HASH(shard_id) PARTITIONS 32;
+```
+
+**Key Features**:
+- **Native Partitioning**: HASH partitioning on shard_id for data distribution
+- **JSON Support**: Native JSON data type for payload and retry_policy (MySQL 5.7+)
+- **Microsecond Precision**: TIMESTAMP(3) for millisecond precision timing
+- **Auto-Update Timestamps**: Automatic updated_at maintenance
+- **Optimized Primary Key**: Clustered by execute_at for fast execution queries
+
+**Query Patterns**:
+```sql
+-- Timer execution query (optimized - uses primary key clustering)
+-- HIGH FREQUENCY: Executed every few seconds per shard
+SELECT timer_id, callback_url, payload, retry_policy
+FROM timers 
+WHERE shard_id = 286 AND execute_at <= NOW(3)
+ORDER BY execute_at ASC
+LIMIT 1000;
+
+-- Direct timer lookup (uses secondary index)
+-- LOWER FREQUENCY: User-driven CRUD operations
+SELECT * FROM timers 
+WHERE shard_id = 286 AND timer_id = 'user-reminder-123';
+```
+
+### PostgreSQL
+
+**Table Definition**:
+```sql
+CREATE TABLE timers (
+    shard_id INTEGER NOT NULL,
+    execute_at TIMESTAMP(3) NOT NULL,
+    timer_id VARCHAR(255) NOT NULL,
+    group_id VARCHAR(255) NOT NULL,
+    callback_url VARCHAR(2048) NOT NULL,
+    payload JSONB,
+    retry_policy JSONB,
+    callback_timeout VARCHAR(32) DEFAULT '30s',
+    created_at TIMESTAMP(3) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP(3) NOT NULL DEFAULT NOW(),
+    executed_at TIMESTAMP(3),
+    PRIMARY KEY (shard_id, execute_at, timer_id)
+) PARTITION BY HASH (shard_id);
+
+-- Create partitions (example for 32 partitions)
+-- CREATE TABLE timers_p0 PARTITION OF timers FOR VALUES WITH (modulus 32, remainder 0);
+-- ... repeat for p1 through p31
+
+-- Secondary index for timer lookups
+CREATE INDEX idx_timer_lookup ON timers (shard_id, timer_id);
+
+-- Trigger for updated_at maintenance
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_timers_updated_at BEFORE UPDATE ON timers 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+```
+
+**Key Features**:
+- **Native Hash Partitioning**: Built-in partitioning by shard_id (PostgreSQL 11+)
+- **JSONB Support**: Binary JSON storage with indexing capabilities for payload/retry_policy
+- **High Precision Timestamps**: Millisecond precision with timezone support
+- **ACID Compliance**: Full transactional guarantees for consistency
+- **Advanced Indexing**: Partial indexes, expression indexes, and JSON indexing capabilities
+
+**Query Patterns**:
+```sql
+-- Timer execution query (partition-aware)
+-- HIGH FREQUENCY: Executed every few seconds per shard
+SELECT timer_id, callback_url, payload, retry_policy
+FROM timers 
+WHERE shard_id = 286 AND execute_at <= NOW()
+ORDER BY execute_at ASC
+LIMIT 1000;
+
+-- Direct timer lookup (uses index)
+-- LOWER FREQUENCY: User-driven CRUD operations
+SELECT * FROM timers 
+WHERE shard_id = 286 AND timer_id = 'user-reminder-123';
+```
+
+### Oracle Database
+
+**Table Definition**:
+```sql
+CREATE TABLE timers (
+    shard_id NUMBER(10) NOT NULL,
+    execute_at TIMESTAMP(3) NOT NULL,
+    timer_id VARCHAR2(255) NOT NULL,
+    group_id VARCHAR2(255) NOT NULL,
+    callback_url VARCHAR2(2048) NOT NULL,
+    payload CLOB CHECK (payload IS JSON),
+    retry_policy CLOB CHECK (retry_policy IS JSON),
+    callback_timeout VARCHAR2(32) DEFAULT '30s',
+    created_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+    executed_at TIMESTAMP(3),
+    PRIMARY KEY (shard_id, execute_at, timer_id)
+) 
+PARTITION BY HASH (shard_id) PARTITIONS 32;
+
+-- Secondary index for timer lookups
+CREATE INDEX idx_timer_lookup ON timers (shard_id, timer_id);
+
+-- Trigger for updated_at maintenance
+CREATE OR REPLACE TRIGGER trg_timers_updated_at
+    BEFORE UPDATE ON timers
+    FOR EACH ROW
+BEGIN
+    :NEW.updated_at := CURRENT_TIMESTAMP;
+END;
+```
+
+**Key Features**:
+- **Enterprise Partitioning**: Advanced partitioning options including hash, range, and composite
+- **JSON Validation**: CHECK constraints with IS JSON for data integrity
+- **High Availability**: RAC clustering and advanced backup/recovery features
+- **Performance**: Query optimizer and execution plan analysis tools
+- **Scalability**: Can handle very large datasets with proper configuration
+
+**Query Patterns**:
+```sql
+-- Timer execution query (partition pruning)
+-- HIGH FREQUENCY: Executed every few seconds per shard
+SELECT timer_id, callback_url, payload, retry_policy
+FROM timers 
+WHERE shard_id = 286 AND execute_at <= CURRENT_TIMESTAMP
+ORDER BY execute_at ASC
+FETCH FIRST 1000 ROWS ONLY;
+
+-- Direct timer lookup (partition + index access)
+-- LOWER FREQUENCY: User-driven CRUD operations
+SELECT * FROM timers 
+WHERE shard_id = 286 AND timer_id = 'user-reminder-123';
+```
+
+### Microsoft SQL Server
+
+**Table Definition**:
+```sql
+CREATE TABLE timers (
+    shard_id INT NOT NULL,
+    execute_at DATETIME2(3) NOT NULL,
+    timer_id NVARCHAR(255) NOT NULL,
+    group_id NVARCHAR(255) NOT NULL,
+    callback_url NVARCHAR(2048) NOT NULL,
+    payload NVARCHAR(MAX) CHECK (ISJSON(payload) = 1),
+    retry_policy NVARCHAR(MAX) CHECK (ISJSON(retry_policy) = 1),
+    callback_timeout NVARCHAR(32) DEFAULT '30s',
+    created_at DATETIME2(3) NOT NULL DEFAULT GETUTCDATE(),
+    updated_at DATETIME2(3) NOT NULL DEFAULT GETUTCDATE(),
+    executed_at DATETIME2(3) NULL,
+    PRIMARY KEY (shard_id, execute_at, timer_id)
+);
+
+-- Partition function and scheme (requires SQL Server Enterprise)
+CREATE PARTITION FUNCTION pf_shard_id (INT)
+AS RANGE LEFT FOR VALUES (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+                         16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30);
+
+CREATE PARTITION SCHEME ps_shard_id
+AS PARTITION pf_shard_id TO ([PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY], 
+                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
+                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
+                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
+                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
+                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
+                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
+                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY]);
+
+-- Recreate table with partitioning (Enterprise Edition)
+-- DROP TABLE timers;
+-- CREATE TABLE timers (...) ON ps_shard_id(shard_id);
+
+-- Secondary index for timer lookups  
+CREATE INDEX idx_timer_lookup ON timers (shard_id, timer_id);
+
+-- Trigger for updated_at maintenance
+CREATE TRIGGER trg_timers_updated_at
+ON timers
+AFTER UPDATE
+AS
+BEGIN
+    UPDATE timers 
+    SET updated_at = GETUTCDATE()
+    FROM timers t
+    INNER JOIN inserted i ON t.shard_id = i.shard_id 
+                         AND t.execute_at = i.execute_at 
+                         AND t.timer_id = i.timer_id;
+END;
+```
+
+**Key Features**:
+- **Table Partitioning**: Available in Enterprise Edition for horizontal scaling
+- **JSON Validation**: ISJSON() function with CHECK constraints for data integrity
+- **High Precision**: DATETIME2(3) for millisecond precision
+- **Enterprise Features**: Advanced indexing, compression, and performance optimization
+- **Integration**: Strong integration with .NET ecosystem and Azure cloud services
+
+**Query Patterns**:
+```sql
+-- Timer execution query (partition elimination)
+-- HIGH FREQUENCY: Executed every few seconds per shard
+SELECT TOP 1000 timer_id, callback_url, payload, retry_policy
+FROM timers 
+WHERE shard_id = 286 AND execute_at <= GETUTCDATE()
+ORDER BY execute_at ASC;
+
+-- Direct timer lookup (partition + index seek)
+-- LOWER FREQUENCY: User-driven CRUD operations
+SELECT * FROM timers 
+WHERE shard_id = 286 AND timer_id = 'user-reminder-123';
+```
+
+
 ## Query Patterns and Performance
 
 ### Primary Operations
