@@ -72,6 +72,30 @@ Each decision should include:
 - **Impact**: Simplified implementation, requires callback-driven rescheduling, reduces storage complexity
 - **Status**: Active
 
+### [Date: 2024-12-19] Database Partitioning Strategy Decision
+- **Context**: Need efficient storage design to support millions of concurrent timers with deterministic lookups and horizontal scaling
+- **Decision**: Use deterministic partitioning with shardId = hash(timerId) % group.numShards, where different groups have configurable shard counts based on scale requirements
+- **Rationale**: Deterministic sharding eliminates scatter-gather queries, enables direct shard targeting for O(1) operations, supports different scale requirements per group, and provides predictable performance
+- **Alternatives**: Random sharding, time-based partitioning, consistent hashing with virtual nodes, single database without partitioning
+- **Impact**: Enables horizontal scaling, requires shard computation logic, provides predictable query performance, supports multi-tenant workload isolation
+- **Status**: Active
+
+### [Date: 2024-12-19] Query Frequency Optimization Decision
+- **Context**: Need to choose between optimizing for timer CRUD operations (by timer_id) vs timer execution queries (by execute_at). Analysis shows execution queries happen continuously every few seconds per shard, while CRUD operations are occasional user-driven actions.
+- **Decision**: Optimize Cassandra clustering for high-frequency execution queries: PRIMARY KEY (shard_id, execute_at, timer_id) with secondary index on (shard_id, timer_id) for CRUD operations
+- **Rationale**: Timer execution is the core service operation happening continuously at scale, while CRUD operations are infrequent user actions. Optimizing for the most frequent operation provides better overall system performance.
+- **Alternatives**: Optimize for CRUD operations with execute_at secondary index, dual table design, hybrid clustering approaches
+- **Impact**: Extremely fast execution queries using clustering order, CRUD operations use local secondary index with acceptable performance cost
+- **Status**: Active
+
+### [Date: 2024-12-19] Timestamp Data Type Decision
+- **Context**: Need efficient time representation for execute_at field that is both performant and human-readable across different database types
+- **Decision**: Use native timestamp data types in each database (TIMESTAMP in SQL databases, ISODate in MongoDB, etc.) for efficiency and human readability
+- **Rationale**: Native timestamp types provide efficient storage and indexing, enable database-native time operations, maintain human readability for debugging, and support timezone handling
+- **Alternatives**: Unix epoch integers, string-based ISO timestamps, separate date/time fields, UTC-only timestamps
+- **Impact**: Efficient time-based queries, database-specific timestamp handling, human-readable storage, requires consistent timezone handling across systems
+- **Status**: Active
+
 ### [Date: 2024-12-19] API Documentation Decision
 - **Context**: Need to document API design decisions and rationale for future reference and team alignment
 - **Decision**: Create comprehensive API design document at [docs/design/api-design.md](docs/design/api-design.md) covering all design decisions, principles, and examples
