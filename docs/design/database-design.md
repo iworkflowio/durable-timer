@@ -63,7 +63,16 @@ Groups support different scale requirements:
 
 ## Table Schema Design
 
-### Core Timer Table
+### Core Timer Table General Idea
+
+**Note**: The schema below represents the conceptual data model. Actual table designs vary significantly based on database-specific optimization strategies and feature availability:
+
+- **Primary Key Structure**: Some databases support non-unique primary keys (enabling smaller, optimized indexes), while others require unique primary keys (necessitating inclusion of timer_id)
+- **Index Strategy**: Clustering/sorting capabilities differ across databases, affecting whether execute_at or timer_id should be prioritized in primary keys
+- **Data Types**: Native timestamp, JSON, and partitioning support varies by database
+- **Uniqueness Constraints**: Methods for enforcing timer_id uniqueness differ (separate unique indexes vs. primary key inclusion)
+
+See database-specific implementations below for actual optimized schemas.
 
 ```sql
 -- Conceptual schema (adapted per database)
@@ -86,6 +95,7 @@ CREATE TABLE timers (
 -- Local index for time-based queries
 CREATE INDEX idx_timers_execute_at ON timers (shard_id, execute_at);
 ```
+ 
 
 ### Field Details
 
@@ -129,6 +139,41 @@ WHERE shard_id = ? AND execute_at <= ?        -- Time-based execution query
 - **Cassandra, TiDB**: Native local indexes within partitions
 - **MongoDB**: Compound indexes that include shardId effectively create local behavior
 - **DynamoDB**: GSI with shardId as partition key acts as local index (avoids LSI 10GB limit)
+
+## Primary Key Size Optimization
+
+### Database-Specific Primary Key Strategies
+
+**Databases Supporting Non-Unique Primary Keys** (can optimize for smaller primary keys):
+- **MongoDB**: Can use non-unique compound indexes with separate unique constraints
+- **Some NoSQL databases**: May support similar patterns
+
+**Databases Requiring Unique Primary Keys** (must include timer_id for uniqueness):
+- **Cassandra**: PRIMARY KEY must be unique
+- **TiDB/MySQL**: PRIMARY KEY must be unique  
+- **DynamoDB**: Primary key combination must be unique
+
+### Optimization Strategy
+
+For databases supporting non-unique primary keys:
+```
+Primary Index:    (shard_id, execute_at)           -- Smaller, optimized for queries
+Unique Index:     (shard_id, timer_id) UNIQUE      -- Separate uniqueness constraint
+```
+
+For databases requiring unique primary keys:
+```
+Primary Key:      (shard_id, execute_at, timer_id) -- Must include timer_id for uniqueness
+Secondary Index:  (shard_id, timer_id)             -- For CRUD operations
+```
+
+### Benefits of Smaller Primary Keys
+
+✅ **Reduced Index Size**: Smaller keys = smaller indexes = better memory usage  
+✅ **Faster Queries**: Less data to scan and compare  
+✅ **Lower Storage Overhead**: Primary key often included in secondary indexes  
+✅ **Better Cache Performance**: More index entries fit in memory  
+✅ **Reduced Network Transfer**: Smaller keys transferred during operations  
 
 ## Database-Specific Implementations
 
@@ -192,9 +237,9 @@ WHERE shard_id = ? AND timer_id = ?;
 {
   _id: ObjectId(),  // MongoDB default
   shardId: NumberInt(286),
+  executeAt: ISODate("2024-12-20T15:30:00Z"),  // Moved up for primary indexing
   timerId: "user-reminder-123", 
   groupId: "notifications",
-  executeAt: ISODate("2024-12-20T15:30:00Z"),
   callbackUrl: "https://api.example.com/webhook",
   payload: {
     userId: "user123",
@@ -219,16 +264,37 @@ sh.enableSharding("timerservice")
 // Shard collection on shardId
 sh.shardCollection("timerservice.timers", {shardId: 1})
 
-// Compound index for queries
-db.timers.createIndex({shardId: 1, timerId: 1}, {unique: true})
+// Primary compound index optimized for high-frequency execution queries (non-unique, smaller)
 db.timers.createIndex({shardId: 1, executeAt: 1})
+
+// Unique index for timer identification and CRUD operations  
+db.timers.createIndex({shardId: 1, timerId: 1}, {unique: true})
 ```
 
 **Key Features**:
 - **Native Sharding**: Built-in shard key support
+- **Optimized Primary Index**: Smaller (shardId, executeAt) index for fast execution queries
+- **Separate Uniqueness**: Dedicated unique index on (shardId, timerId) for constraints and CRUD
 - **Flexible Schema**: JSON-native storage for payload and retry policy
-- **Rich Indexing**: Compound indexes for efficient queries
+- **Performance**: Smaller primary index improves query performance and storage efficiency
 - **Horizontal Scaling**: Automatic balancing across shards
+
+**Query Patterns**:
+```javascript
+// Timer execution query (optimized - uses primary index)
+// HIGH FREQUENCY: Executed every few seconds per shard
+db.timers.find({
+  shardId: 286,
+  executeAt: {$lte: new Date()}
+}).sort({executeAt: 1})
+
+// Direct timer lookup (uses secondary index)
+// LOWER FREQUENCY: User-driven CRUD operations  
+db.timers.findOne({
+  shardId: 286,
+  timerId: "user-reminder-123"
+})
+```
 
 ### TiDB (MySQL Compatible)
 
@@ -236,9 +302,9 @@ db.timers.createIndex({shardId: 1, executeAt: 1})
 ```sql
 CREATE TABLE timers (
     shard_id INT NOT NULL,
-    timer_id VARCHAR(255) NOT NULL,
+    execute_at TIMESTAMP(3) NOT NULL,  -- Primary clustering column for execution queries
+    timer_id VARCHAR(255) NOT NULL,    -- Part of primary key for uniqueness
     group_id VARCHAR(255) NOT NULL,
-    execute_at TIMESTAMP(3) NOT NULL,
     callback_url VARCHAR(2048) NOT NULL,
     payload JSON,
     retry_policy JSON,
@@ -246,16 +312,34 @@ CREATE TABLE timers (
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     executed_at TIMESTAMP(3) NULL,
-    PRIMARY KEY (shard_id, timer_id),
-    KEY idx_execute_at (shard_id, execute_at)
+    PRIMARY KEY (shard_id, execute_at, timer_id),
+    KEY idx_timer_id (shard_id, timer_id)  -- Secondary index for CRUD operations
 ) PARTITION BY HASH(shard_id) PARTITIONS 1024;
 ```
 
 **Key Features**:
 - **MySQL Compatibility**: Standard SQL with MySQL extensions
 - **Native Partitioning**: HASH partitioning on shard_id
+- **Time-Optimized Primary Key**: execute_at as primary clustering column for fast execution queries
 - **JSON Support**: Native JSON data type for flexible fields
+- **Secondary Index**: Separate index for timer_id lookups
 - **HTAP**: Hybrid transactional and analytical processing
+
+**Query Patterns**:
+```sql
+-- Timer execution query (optimized - uses primary key order)
+-- HIGH FREQUENCY: Executed every few seconds per shard
+SELECT timer_id, callback_url, payload, retry_policy
+FROM timers 
+WHERE shard_id = ? AND execute_at <= NOW()
+ORDER BY execute_at ASC, timer_id ASC
+LIMIT 1000;
+
+-- Direct timer lookup (uses secondary index)
+-- LOWER FREQUENCY: User-driven CRUD operations
+SELECT * FROM timers 
+WHERE shard_id = ? AND timer_id = ?;
+```
 
 ### DynamoDB
 
@@ -269,7 +353,7 @@ CREATE TABLE timers (
       "KeyType": "HASH"
     },
     {
-      "AttributeName": "timerId", 
+      "AttributeName": "executeAt", 
       "KeyType": "RANGE"
     }
   ],
@@ -279,24 +363,24 @@ CREATE TABLE timers (
       "AttributeType": "N"
     },
     {
-      "AttributeName": "timerId",
+      "AttributeName": "executeAt",
       "AttributeType": "S"
     },
     {
-      "AttributeName": "executeAt",
+      "AttributeName": "timerId",
       "AttributeType": "S"
     }
   ],
   "GlobalSecondaryIndexes": [
     {
-      "IndexName": "executeAt-index",
+      "IndexName": "timerId-index",
       "KeySchema": [
         {
           "AttributeName": "shardId",
           "KeyType": "HASH"
         },
         {
-          "AttributeName": "executeAt",
+          "AttributeName": "timerId",
           "KeyType": "RANGE"
         }
       ]
@@ -309,9 +393,9 @@ CREATE TABLE timers (
 ```json
 {
   "shardId": {"N": "286"},
-  "timerId": {"S": "user-reminder-123"},
+  "executeAt": {"S": "2024-12-20T15:30:00Z"},  // Primary range key for execution queries
+  "timerId": {"S": "user-reminder-123"},       // Moved to GSI for CRUD operations
   "groupId": {"S": "notifications"},
-  "executeAt": {"S": "2024-12-20T15:30:00Z"},
   "callbackUrl": {"S": "https://api.example.com/webhook"},
   "payload": {"S": "{\"userId\":\"user123\"}"},
   "retryPolicy": {"S": "{\"maxRetries\":3}"},
@@ -324,9 +408,38 @@ CREATE TABLE timers (
 
 **Key Features**:
 - **Managed Service**: Fully managed, serverless scaling
-- **Partition Key**: Natural sharding via shardId hash key
-- **GSI**: Global Secondary Index for time-based queries (effectively "local" since partitioned by shardId)
+- **Time-Optimized Primary Key**: executeAt as range key enables fast execution queries
+- **GSI for CRUD**: Global Secondary Index on timerId for timer CRUD operations
 - **Consistent Hashing**: Built-in data distribution
+- **Uniqueness**: Combined (shardId, executeAt, timerId) ensures uniqueness
+
+**Note on Uniqueness**: Since multiple timers can have the same executeAt, we include timerId in the item structure to maintain uniqueness. DynamoDB will handle items with identical primary keys by overwriting, so application logic must ensure executeAt + timerId combinations are unique.
+
+**Query Patterns**:
+```javascript
+// Timer execution query (optimized - uses primary key range)
+// HIGH FREQUENCY: Executed every few seconds per shard
+{
+  TableName: "timers",
+  KeyConditionExpression: "shardId = :shardId AND executeAt <= :now",
+  ExpressionAttributeValues: {
+    ":shardId": {"N": "286"},
+    ":now": {"S": "2024-12-20T15:30:00Z"}
+  }
+}
+
+// Direct timer lookup (uses GSI)
+// LOWER FREQUENCY: User-driven CRUD operations
+{
+  TableName: "timers", 
+  IndexName: "timerId-index",
+  KeyConditionExpression: "shardId = :shardId AND timerId = :timerId",
+  ExpressionAttributeValues: {
+    ":shardId": {"N": "286"},
+    ":timerId": {"S": "user-reminder-123"}
+  }
+}
+```
 
 **Note on GSI vs LSI**: We use GSI instead of LSI because:
 - LSI has 10GB limit per partition (could be exceeded by large shards)

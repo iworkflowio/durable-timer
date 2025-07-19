@@ -80,12 +80,20 @@ Each decision should include:
 - **Impact**: Enables horizontal scaling, requires shard computation logic, provides predictable query performance, supports multi-tenant workload isolation
 - **Status**: Active
 
+### [Date: 2024-12-19] Primary Key Size Optimization Decision
+- **Context**: Need to balance query performance optimization with primary key size efficiency. Larger primary keys impact index size, storage overhead, and query performance. Some databases support non-unique primary keys with separate unique constraints.
+- **Decision**: Use database-specific primary key strategies - smaller primary keys for databases supporting non-unique indexes (MongoDB), and include timer_id in primary key only when required for uniqueness (Cassandra, TiDB, DynamoDB)
+- **Rationale**: Smaller primary keys improve index performance, reduce storage overhead, and enhance cache efficiency. For databases that support it, separating query optimization from uniqueness constraints provides better performance.
+- **Alternatives**: Use same primary key strategy across all databases, always include timer_id in primary key, use separate tables for different access patterns
+- **Impact**: MongoDB gets optimized smaller primary index (shardId, executeAt) with separate unique constraint, while Cassandra/TiDB/DynamoDB retain (shardId, executeAt, timerId) primary keys for uniqueness requirements
+- **Status**: Active
+
 ### [Date: 2024-12-19] Query Frequency Optimization Decision
 - **Context**: Need to choose between optimizing for timer CRUD operations (by timer_id) vs timer execution queries (by execute_at). Analysis shows execution queries happen continuously every few seconds per shard, while CRUD operations are occasional user-driven actions.
-- **Decision**: Optimize Cassandra clustering for high-frequency execution queries: PRIMARY KEY (shard_id, execute_at, timer_id) with secondary index on (shard_id, timer_id) for CRUD operations
-- **Rationale**: Timer execution is the core service operation happening continuously at scale, while CRUD operations are infrequent user actions. Optimizing for the most frequent operation provides better overall system performance.
-- **Alternatives**: Optimize for CRUD operations with execute_at secondary index, dual table design, hybrid clustering approaches
-- **Impact**: Extremely fast execution queries using clustering order, CRUD operations use local secondary index with acceptable performance cost
+- **Decision**: Optimize all database schemas for high-frequency execution queries: use execute_at as primary clustering/sort key with secondary indexes on timer_id for CRUD operations. Applied to Cassandra, MongoDB, TiDB, and DynamoDB.
+- **Rationale**: Timer execution is the core service operation happening continuously at scale, while CRUD operations are infrequent user actions. Optimizing for the most frequent operation provides better overall system performance across all database types.
+- **Alternatives**: Optimize for CRUD operations with execute_at secondary indexes, dual table design, hybrid clustering approaches, database-specific optimizations
+- **Impact**: Extremely fast execution queries using primary key/index order across all databases, CRUD operations use secondary indexes with acceptable performance cost, consistent optimization strategy across all supported databases
 - **Status**: Active
 
 ### [Date: 2024-12-19] Timestamp Data Type Decision
