@@ -1,6 +1,6 @@
 FROM golang:1.19 AS build
 WORKDIR /go/src
-COPY go ./go
+COPY genapi/go ./go
 COPY main.go .
 COPY go.sum .
 COPY go.mod .
