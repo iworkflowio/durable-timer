@@ -138,7 +138,7 @@ WHERE shard_id = ? AND execute_at <= ?        -- Time-based execution query
 **Database Implementation Notes**:
 - **Cassandra, TiDB**: Native local indexes within partitions
 - **MongoDB**: Compound indexes that include shardId effectively create local behavior
-- **DynamoDB**: GSI with shardId as partition key acts as local index (avoids LSI 10GB limit)
+- **DynamoDB**: LSI with shardId partition key provides cost-effective local indexes (10GB limit managed via shard allocation)
 
 ## Primary Key Size Optimization
 
@@ -371,7 +371,7 @@ WHERE shard_id = ? AND timer_id = ?;
       "AttributeType": "S"
     }
   ],
-  "GlobalSecondaryIndexes": [
+  "LocalSecondaryIndexes": [
     {
       "IndexName": "timerId-index",
       "KeySchema": [
@@ -394,7 +394,7 @@ WHERE shard_id = ? AND timer_id = ?;
 {
   "shardId": {"N": "286"},
   "executeAt": {"S": "2024-12-20T15:30:00Z"},  // Primary range key for execution queries
-  "timerId": {"S": "user-reminder-123"},       // Moved to GSI for CRUD operations
+  "timerId": {"S": "user-reminder-123"},       // Included in LSI for CRUD operations
   "groupId": {"S": "notifications"},
   "callbackUrl": {"S": "https://api.example.com/webhook"},
   "payload": {"S": "{\"userId\":\"user123\"}"},
@@ -409,7 +409,7 @@ WHERE shard_id = ? AND timer_id = ?;
 **Key Features**:
 - **Managed Service**: Fully managed, serverless scaling
 - **Time-Optimized Primary Key**: executeAt as range key enables fast execution queries
-- **GSI for CRUD**: Global Secondary Index on timerId for timer CRUD operations
+- **LSI for CRUD**: Local Secondary Index on timerId for timer CRUD operations
 - **Consistent Hashing**: Built-in data distribution
 - **Uniqueness**: Combined (shardId, executeAt, timerId) ensures uniqueness
 
@@ -428,7 +428,7 @@ WHERE shard_id = ? AND timer_id = ?;
   }
 }
 
-// Direct timer lookup (uses GSI)
+// Direct timer lookup (uses LSI)
 // LOWER FREQUENCY: User-driven CRUD operations
 {
   TableName: "timers", 
@@ -441,10 +441,12 @@ WHERE shard_id = ? AND timer_id = ?;
 }
 ```
 
-**Note on GSI vs LSI**: We use GSI instead of LSI because:
-- LSI has 10GB limit per partition (could be exceeded by large shards)
-- GSI with shardId as partition key behaves like local index for our use case
-- GSI provides unlimited storage per partition
+**Note on LSI vs GSI Cost in DynamoDB**:
+
+- **LSI (Local Secondary Index)**: Storage for LSI is billed at the same rate as the base table, and write costs are included in the base table's write capacity. LSI has a strict 10GB storage limit per partition, but this is manageable through proper shard management. LSI queries are always strongly consistent and operate within the same partition as the base table.
+- **GSI (Global Secondary Index)**: GSI storage is billed separately from the base table, and you pay for both read and write capacity (or on-demand) on the GSI in addition to the base table. GSI does **not** have the 10GB per-partition limit—storage is effectively unlimited and scales independently.
+- **Cost Comparison**: LSI is significantly more cost-effective for write-heavy workloads since writes don't consume additional capacity. GSI incurs additional costs for every write operation that affects the index.
+- **Design Choice**: We use LSI with `shardId` as partition key to minimize costs. The 10GB partition limit is managed through administrative controls - when a partition approaches the limit, system administrators can create new groups with higher shard counts to redistribute the load. For customers requiring unlimited partition storage, GSI support can be offered as a premium feature with higher DynamoDB costs.
 
 ## Query Patterns and Performance
 

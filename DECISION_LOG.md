@@ -112,6 +112,14 @@ Each decision should include:
 - **Impact**: Clear design documentation supports consistent implementation and informed future decisions
 - **Status**: Active
 
+### [Date: 2025-07-19] DynamoDB LSI Cost Optimization Decision
+- **Context**: Need to balance DynamoDB costs vs storage flexibility. Original design used GSI to avoid LSI 10GB partition limit, but GSI incurs significant additional costs for write-heavy timer workloads due to separate write capacity consumption on both base table and GSI.
+- **Decision**: Revert to Local Secondary Index (LSI) instead of Global Secondary Index (GSI) for DynamoDB implementation to minimize costs. Manage the 10GB partition limit through administrative controls - when partitions approach the limit, create new groups with higher shard counts to redistribute load.
+- **Rationale**: LSI is significantly more cost-effective for write-heavy workloads since writes are included in base table capacity. The 10GB limit is manageable through proper capacity planning and administrative resharding. Cost savings outweigh the operational overhead of monitoring partition sizes.
+- **Alternatives**: Continue using GSI for unlimited storage, hybrid approach with both LSI and GSI options, separate storage backends for large partitions
+- **Impact**: Substantial cost reduction for DynamoDB deployments, requires monitoring of partition sizes and administrative resharding procedures, establishes foundation for future premium GSI features
+- **Status**: Active
+
 ### [Date: TBD] Technology Stack Selection
 - **Context**: Choose programming languages, frameworks, and core technologies
 - **Decision**: [To be determined]
