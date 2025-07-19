@@ -113,6 +113,41 @@ CREATE INDEX idx_timers_execute_at ON timers (shard_id, execute_at);
 | `updated_at` | TIMESTAMP | Last modification | Optimistic locking |
 | `executed_at` | TIMESTAMP | Execution time | Nullable, set when executed |
 
+## Design Trade-offs
+
+### Group-Based Partitioning Trade-offs
+
+**Cons: API Complexity**
+- **Exposed Abstraction**: Users must understand and provide `groupId` for timer operations
+- **API Surface**: Get, update, and delete operations require both `groupId` and `timerId` parameters
+- **Learning Curve**: Additional concept for users to understand beyond simple timer IDs
+
+**Pros: Operational Simplicity**  
+- **No Complex Resharding**: Avoids building sophisticated data migration mechanisms when changing `numShards` configuration
+- **Predictable Performance**: Shard assignment is deterministic and doesn't require cluster-wide coordination
+- **Simpler Implementation**: No need for complex resharding algorithms, data movement, or consistency guarantees during resharding operations
+
+**Impact Assessment**
+- **Limited API Impact**: Only 3 of 4 API endpoints require `groupId` (create timer uses it implicitly for shard assignment)
+- **Better Than Alternatives**: Exposing `groupId` is preferable to exposing raw `shardId` or requiring complex client-side shard computation
+- **Operational Benefits**: The operational simplicity of avoiding resharding outweighs the minor API complexity increase
+- **Future Flexibility**: Groups can be pre-allocated with appropriate shard counts based on expected load, reducing the need for runtime resharding
+
+**Similarity to NoSQL Database Patterns**
+This trade-off mirrors common patterns in distributed NoSQL databases:
+- **Cassandra**: Exposes partition keys to users for predictable performance and data locality
+- **DynamoDB**: Requires users to design partition keys and understand hot partitions for optimal scaling
+- **MongoDB Sharding**: Users must choose shard keys and understand their impact on query routing
+- **HBase**: Row key design directly affects data distribution and query performance
+
+Like these systems, we expose partitioning concepts (`groupId`) to users in exchange for:
+- Predictable, scalable performance
+- Elimination of complex auto-resharding mechanisms
+- Simplified operational model
+- Direct user control over data distribution
+
+**Conclusion**: The design trades minor API complexity for significant operational simplicity. Users learn one additional concept (`groupId`) but gain predictable performance and avoid the complexity and risks associated with online resharding operations. This follows established patterns in distributed systems where exposing partitioning concepts to users is a proven approach for achieving scale.
+
 ## Index Strategy: Local vs Global
 
 ### Why Local Indexes Are Sufficient
