@@ -120,6 +120,14 @@ Each decision should include:
 - **Impact**: Substantial cost reduction for DynamoDB deployments, requires monitoring of partition sizes and administrative resharding procedures, establishes foundation for future premium GSI features
 - **Status**: Active
 
+### [Date: 2025-07-19] Repository Layout and Structure Decision
+- **Context**: Need to organize a complex multi-component project including server implementation, multi-language SDKs, WebUI, CLI tools, deployment configurations, and comprehensive testing. Structure must support independent development, multi-language builds, and operational excellence.
+- **Decision**: Implement component-based repository structure with clear separation of concerns: server/, sdks/{language}/, webUI/, cli/, benchmark/, docker/, helmcharts/, operations/, .github/, and docs/. Each component has independent development lifecycle while maintaining integration points. Full specification: [docs/repo-layout.md](docs/repo-layout.md)
+- **Rationale**: Separation of concerns enables parallel development, component-specific CI/CD pipelines, independent versioning, and clear ownership boundaries. Multi-language SDK organization supports language-specific tooling and best practices. Infrastructure-as-code organization enables reliable deployment automation.
+- **Alternatives**: Monolithic structure, separate repositories per component, language-agnostic SDK organization, merged infrastructure and application code
+- **Impact**: Enables parallel development across multiple teams, supports independent release cycles, facilitates multi-language SDK maintenance, and provides clear operational deployment path through Docker and Kubernetes configurations
+- **Status**: Active
+
 ### [Date: TBD] Technology Stack Selection
 - **Context**: Choose programming languages, frameworks, and core technologies
 - **Decision**: [To be determined]
