@@ -40,12 +40,44 @@ Each decision should include:
 - **Impact**: [To be assessed]
 - **Status**: Pending
 
-### [Date: 2024-12-19] API Design Decision
+### [Date: 2024-12-19] API Design Decision  
 - **Context**: Need to define the REST API structure and data models for the timer service
-- **Decision**: Minimal RESTful API with OpenAPI 3.0.3 specification including only the 4 core timer CRUD operations (POST /timers, GET /timers/{id}, PUT /timers/{id}, DELETE /timers/{id}) - strictly following requirements without any additional endpoints
-- **Rationale**: REST API provides familiar interface for developers, OpenAPI spec enables auto-generated documentation and client SDKs. Strict adherence to requirements prevents scope creep and ensures we build exactly what was specified - no health, metrics, or other infrastructure endpoints unless explicitly required.
-- **Alternatives**: GraphQL API, gRPC-only API, comprehensive API with additional infrastructure endpoints
-- **Impact**: Enables rapid SDK development with minimal API surface. Maintains laser focus on core timer functionality only.
+- **Decision**: Minimal RESTful API with group-based scalability using composite keys {groupId, timerId}, standardized callback response protocol, and enhanced retry policies with duration limits. Full specification: [api.yaml](api.yaml), Design documentation: [docs/design/api-design.md](docs/design/api-design.md)
+- **Rationale**: Group-based sharding enables horizontal scaling, composite keys support efficient lookups, CallbackResponse schema provides clear success/failure semantics with rescheduling capability, simplified timer model reduces complexity
+- **Alternatives**: Single-key timers, complex status tracking, implicit callback responses, basic retry policies
+- **Impact**: Enables horizontal scaling through sharding, clear callback semantics, flexible retry control, simplified client integration
+- **Status**: Active
+
+### [Date: 2024-12-19] Group-Based Scalability Decision
+- **Context**: Need to design for horizontal scaling to support millions of concurrent timers as specified in requirements
+- **Decision**: Implement group-based sharding with composite keys {groupId, timerId} for all timer operations
+- **Rationale**: Groups enable horizontal scaling by distributing different groups across service instances, provide workload isolation, and support efficient lookups without expensive list operations
+- **Alternatives**: Single global namespace, hash-based sharding, time-based partitioning
+- **Impact**: Enables horizontal scaling, requires clients to specify groupId, simplifies sharding logic
+- **Status**: Active
+
+### [Date: 2024-12-19] Callback Response Protocol Decision
+- **Context**: Need standardized way for callbacks to indicate success/failure and enable timer rescheduling (FR-2.4)
+- **Decision**: Define CallbackResponse schema with required 'ok' boolean and optional 'nextExecuteAt' for rescheduling
+- **Rationale**: Clear success/failure semantics prevent ambiguous callback responses, enables timer rescheduling capability, standardizes callback contract across all integrations
+- **Alternatives**: HTTP status codes only, custom headers, implicit rescheduling logic
+- **Impact**: Requires callback endpoints to return structured JSON response, enables powerful rescheduling workflows
+- **Status**: Active
+
+### [Date: 2024-12-19] Simplified Timer Model Decision
+- **Context**: Need to balance functionality with simplicity to avoid over-engineering
+- **Decision**: Remove timer status tracking and nextExecuteAt fields from timer model, handle rescheduling via callback responses only
+- **Rationale**: Simplifies data model, reduces state management complexity, focuses on core timer functionality, makes rescheduling explicit via callback interaction
+- **Alternatives**: Complex status state machine, persistent next execution tracking, hybrid approaches
+- **Impact**: Simplified implementation, requires callback-driven rescheduling, reduces storage complexity
+- **Status**: Active
+
+### [Date: 2024-12-19] API Documentation Decision
+- **Context**: Need to document API design decisions and rationale for future reference and team alignment
+- **Decision**: Create comprehensive API design document at [docs/design/api-design.md](docs/design/api-design.md) covering all design decisions, principles, and examples
+- **Rationale**: Centralized documentation ensures team understanding of design choices, facilitates onboarding, and provides reference for future API evolution decisions
+- **Alternatives**: Inline API comments only, separate architecture document, wiki-based documentation
+- **Impact**: Clear design documentation supports consistent implementation and informed future decisions
 - **Status**: Active
 
 ### [Date: TBD] Technology Stack Selection
