@@ -16,7 +16,7 @@ Each decision should include:
 
 ## Decisions
 
-### [Date: 2024-12-19] Requirements Adherence Rule
+### [Date: 2025-07-19] Requirements Adherence Rule
 - **Context**: During API design, I added features not explicitly specified in requirements (list API, execution history), which violates the principle of building only what's specified
 - **Decision**: Add strict requirements adherence rule to project guidelines - implement only what is explicitly documented in requirements
 - **Rationale**: Prevents scope creep, maintains project focus, ensures we build exactly what was specified rather than what seems "obvious" or "nice to have"
@@ -24,7 +24,7 @@ Each decision should include:
 - **Impact**: Requires explicit requirements updates for any new features, prevents uncontrolled feature growth
 - **Status**: Active
 
-### [Date: 2024-12-19] WebUI Inclusion Decision
+### [Date: 2025-07-19] WebUI Inclusion Decision
 - **Context**: Need to decide whether to include a web-based user interface for timer management and monitoring
 - **Decision**: Include a comprehensive WebUI as part of the core service offering
 - **Rationale**: A WebUI will significantly improve operator experience by providing visual timer management, real-time monitoring, and system health visibility. This reduces the learning curve and operational complexity.
@@ -40,7 +40,7 @@ Each decision should include:
 - **Impact**: [To be assessed]
 - **Status**: Pending
 
-### [Date: 2024-12-19] API Design Decision  
+### [Date: 2025-07-19] API Design Decision  
 - **Context**: Need to define the REST API structure and data models for the timer service
 - **Decision**: Minimal RESTful API with group-based scalability using composite keys {groupId, timerId}, standardized callback response protocol, and enhanced retry policies with duration limits. Full specification: [api.yaml](api.yaml), Design documentation: [docs/design/api-design.md](docs/design/api-design.md)
 - **Rationale**: Group-based sharding enables horizontal scaling, composite keys support efficient lookups, CallbackResponse schema provides clear success/failure semantics with rescheduling capability, simplified timer model reduces complexity
@@ -48,7 +48,7 @@ Each decision should include:
 - **Impact**: Enables horizontal scaling through sharding, clear callback semantics, flexible retry control, simplified client integration
 - **Status**: Active
 
-### [Date: 2024-12-19] Group-Based Scalability Decision
+### [Date: 2025-07-19] Group-Based Scalability Decision
 - **Context**: Need to design for horizontal scaling to support millions of concurrent timers as specified in requirements
 - **Decision**: Implement group-based sharding with composite keys {groupId, timerId} for all timer operations
 - **Rationale**: Groups enable horizontal scaling by distributing different groups across service instances, provide workload isolation, and support efficient lookups without expensive list operations
@@ -56,7 +56,7 @@ Each decision should include:
 - **Impact**: Enables horizontal scaling, requires clients to specify groupId, simplifies sharding logic
 - **Status**: Active
 
-### [Date: 2024-12-19] Callback Response Protocol Decision
+### [Date: 2025-07-19] Callback Response Protocol Decision
 - **Context**: Need standardized way for callbacks to indicate success/failure and enable timer rescheduling (FR-2.4)
 - **Decision**: Define CallbackResponse schema with required 'ok' boolean and optional 'nextExecuteAt' for rescheduling
 - **Rationale**: Clear success/failure semantics prevent ambiguous callback responses, enables timer rescheduling capability, standardizes callback contract across all integrations
@@ -64,7 +64,7 @@ Each decision should include:
 - **Impact**: Requires callback endpoints to return structured JSON response, enables powerful rescheduling workflows
 - **Status**: Active
 
-### [Date: 2024-12-19] Simplified Timer Model Decision
+### [Date: 2025-07-19] Simplified Timer Model Decision
 - **Context**: Need to balance functionality with simplicity to avoid over-engineering
 - **Decision**: Remove timer status tracking and nextExecuteAt fields from timer model, handle rescheduling via callback responses only
 - **Rationale**: Simplifies data model, reduces state management complexity, focuses on core timer functionality, makes rescheduling explicit via callback interaction
@@ -72,7 +72,7 @@ Each decision should include:
 - **Impact**: Simplified implementation, requires callback-driven rescheduling, reduces storage complexity
 - **Status**: Active
 
-### [Date: 2024-12-19] Database Partitioning Strategy Decision
+### [Date: 2025-07-19] Database Partitioning Strategy Decision
 - **Context**: Need efficient storage design to support millions of concurrent timers with deterministic lookups and horizontal scaling
 - **Decision**: Use deterministic partitioning with shardId = hash(timerId) % group.numShards, where different groups have configurable shard counts based on scale requirements
 - **Rationale**: Deterministic sharding eliminates scatter-gather queries, enables direct shard targeting for O(1) operations, supports different scale requirements per group, and provides predictable performance
@@ -80,7 +80,7 @@ Each decision should include:
 - **Impact**: Enables horizontal scaling, requires shard computation logic, provides predictable query performance, supports multi-tenant workload isolation
 - **Status**: Active
 
-### [Date: 2024-12-19] Primary Key Size Optimization Decision
+### [Date: 2025-07-19] Primary Key Size Optimization Decision
 - **Context**: Need to balance query performance optimization with primary key size efficiency. Larger primary keys impact index size, storage overhead, and query performance. Some databases support non-unique primary keys with separate unique constraints.
 - **Decision**: Use database-specific primary key strategies - smaller primary keys for databases supporting non-unique indexes (MongoDB), and include timer_id in primary key only when required for uniqueness (Cassandra, TiDB, DynamoDB)
 - **Rationale**: Smaller primary keys improve index performance, reduce storage overhead, and enhance cache efficiency. For databases that support it, separating query optimization from uniqueness constraints provides better performance.
@@ -88,7 +88,7 @@ Each decision should include:
 - **Impact**: MongoDB gets optimized smaller primary index (shardId, executeAt) with separate unique constraint, while Cassandra/TiDB/DynamoDB retain (shardId, executeAt, timerId) primary keys for uniqueness requirements
 - **Status**: Active
 
-### [Date: 2024-12-19] Query Frequency Optimization Decision
+### [Date: 2025-07-19] Query Frequency Optimization Decision
 - **Context**: Need to choose between optimizing for timer CRUD operations (by timer_id) vs timer execution queries (by execute_at). Analysis shows execution queries happen continuously every few seconds per shard, while CRUD operations are occasional user-driven actions.
 - **Decision**: Optimize all database schemas for high-frequency execution queries: use execute_at as primary clustering/sort key with secondary indexes on timer_id for CRUD operations. Applied to Cassandra, MongoDB, TiDB, and DynamoDB.
 - **Rationale**: Timer execution is the core service operation happening continuously at scale, while CRUD operations are infrequent user actions. Optimizing for the most frequent operation provides better overall system performance across all database types.
@@ -96,7 +96,7 @@ Each decision should include:
 - **Impact**: Extremely fast execution queries using primary key/index order across all databases, CRUD operations use secondary indexes with acceptable performance cost, consistent optimization strategy across all supported databases
 - **Status**: Active
 
-### [Date: 2024-12-19] Timestamp Data Type Decision
+### [Date: 2025-07-19] Timestamp Data Type Decision
 - **Context**: Need efficient time representation for execute_at field that is both performant and human-readable across different database types
 - **Decision**: Use native timestamp data types in each database (TIMESTAMP in SQL databases, ISODate in MongoDB, etc.) for efficiency and human readability
 - **Rationale**: Native timestamp types provide efficient storage and indexing, enable database-native time operations, maintain human readability for debugging, and support timezone handling
@@ -104,7 +104,7 @@ Each decision should include:
 - **Impact**: Efficient time-based queries, database-specific timestamp handling, human-readable storage, requires consistent timezone handling across systems
 - **Status**: Active
 
-### [Date: 2024-12-19] API Documentation Decision
+### [Date: 2025-07-19] API Documentation Decision
 - **Context**: Need to document API design decisions and rationale for future reference and team alignment
 - **Decision**: Create comprehensive API design document at [docs/design/api-design.md](docs/design/api-design.md) covering all design decisions, principles, and examples
 - **Rationale**: Centralized documentation ensures team understanding of design choices, facilitates onboarding, and provides reference for future API evolution decisions
