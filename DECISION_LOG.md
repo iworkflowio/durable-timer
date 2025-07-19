@@ -128,6 +128,14 @@ Each decision should include:
 - **Impact**: Enables parallel development across multiple teams, supports independent release cycles, facilitates multi-language SDK maintenance, and provides clear operational deployment path through Docker and Kubernetes configurations
 - **Status**: Active
 
+### [Date: 2025-07-19] Server and CLI Technology Stack Decision
+- **Context**: Need to choose implementation language for the core timer service server and CLI tools. Must prioritize performance, concurrency, operational simplicity, and development productivity for a distributed system handling millions of timers.
+- **Decision**: Implement both server and CLI components in Go (Golang). Server follows standard Go project layout with cmd/, internal/, and pkg/ directories. CLI uses Cobra framework for command-line interface. Both components share common libraries through internal packages.
+- **Rationale**: Go provides excellent concurrency primitives (goroutines) for timer execution, strong HTTP standard library, mature ecosystem for database drivers, simple deployment (single binary), fast compilation, and strong operational characteristics. CLI consistency with server simplifies build and deployment.
+- **Alternatives**: Java (Spring Boot), Rust, Python (FastAPI), Node.js, C#, separate language for CLI
+- **Impact**: Enables high-performance concurrent timer execution, simplified deployment and operations, consistent development experience across server and CLI, leverages Go's strong ecosystem for distributed systems
+- **Status**: Active
+
 ### [Date: TBD] Technology Stack Selection
 - **Context**: Choose programming languages, frameworks, and core technologies
 - **Decision**: [To be determined]

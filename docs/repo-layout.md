@@ -12,11 +12,19 @@ The repository is organized into logical components that support the complete li
 durable-timer/
 ├── docs/                    # Documentation and design documents
 │   └── design/             # Architecture and design specifications
-├── server/                 # Core timer service implementation
-│   ├── engine/            # Timer execution engine and core logic
-│   ├── databases/         # Database adapters and implementations
-│   ├── config/           # Configuration management and validation
-│   └── integTests/       # Integration tests for server components
+├── server/                 # Core timer service implementation (Go)
+│   ├── cmd/              # Main applications and entry points
+│   ├── internal/         # Private application and library code
+│   │   ├── engine/       # Timer execution engine and core logic
+│   │   ├── databases/    # Database adapters and implementations
+│   │   ├── config/       # Configuration management and validation
+│   │   ├── api/          # HTTP handlers and routing
+│   │   └── models/       # Data structures and domain models
+│   ├── pkg/              # Library code that's ok for external use
+│   ├── integTests/       # Integration tests for server components
+│   ├── go.mod            # Go module definition
+│   ├── go.sum            # Go module checksums
+│   └── Makefile          # Build and development commands
 ├── sdks/                  # Client SDKs for multiple languages
 │   ├── go/               # Go SDK implementation
 │   ├── java/             # Java SDK implementation
@@ -27,7 +35,12 @@ durable-timer/
 │   ├── php/              # PHP SDK implementation
 │   └── ruby/             # Ruby SDK implementation
 ├── webUI/                 # Web-based management interface
-├── cli/                   # Command-line interface tools
+├── cli/                   # Command-line interface tools (Go)
+│   ├── cmd/              # CLI command definitions
+│   ├── internal/         # CLI-specific internal packages
+│   ├── go.mod            # Go module definition
+│   ├── go.sum            # Go module checksums
+│   └── Makefile          # Build commands
 ├── benchmark/             # Performance benchmarking tools and tests
 ├── docker/                # Docker configurations and multi-stage builds
 ├── helmcharts/            # Kubernetes Helm charts for deployment
@@ -44,9 +57,24 @@ durable-timer/
 
 ### `/server/` - Core Service Implementation
 
-The server directory contains the core distributed timer service implementation.
+The server directory contains the core distributed timer service implementation, built in **Go** for performance and concurrency.
 
-#### `/server/engine/`
+**Technology Stack**:
+- **Language**: Go (Golang)
+- **Architecture**: Microservice with pluggable database adapters
+- **Concurrency**: Goroutines for timer execution and callback processing
+- **HTTP Framework**: Standard library or lightweight framework (Gin/Echo)
+- **Configuration**: Viper for configuration management
+
+#### `/server/cmd/`
+- **Purpose**: Main application entry points and executables
+- **Contents**:
+  - `main.go` - Primary server application
+  - Command-line argument parsing
+  - Application initialization and startup
+  - Graceful shutdown handling
+
+#### `/server/internal/engine/`
 - **Purpose**: Timer execution engine and core business logic
 - **Contents**:
   - Timer lifecycle management (create, update, delete, execute)
@@ -55,7 +83,7 @@ The server directory contains the core distributed timer service implementation.
   - Timer scheduling and execution coordination
   - Metrics collection and health monitoring
 
-#### `/server/databases/`
+#### `/server/internal/databases/`
 - **Purpose**: Database abstraction layer and implementations
 - **Contents**:
   - Database interface definitions
@@ -71,7 +99,7 @@ The server directory contains the core distributed timer service implementation.
   - Connection pooling and management
   - Migration scripts and schema definitions
 
-#### `/server/config/`
+#### `/server/internal/config/`
 - **Purpose**: Configuration management and validation
 - **Contents**:
   - Configuration schema definitions
@@ -79,6 +107,32 @@ The server directory contains the core distributed timer service implementation.
   - Group and shard configuration management
   - Database connection configurations
   - Validation logic for configuration files
+
+#### `/server/internal/api/`
+- **Purpose**: HTTP API handlers and routing
+- **Contents**:
+  - REST API endpoint handlers
+  - Request/response serialization
+  - Middleware (authentication, logging, metrics)
+  - OpenAPI specification validation
+  - HTTP server configuration
+
+#### `/server/internal/models/`
+- **Purpose**: Data structures and domain models
+- **Contents**:
+  - Timer domain models
+  - Request/response DTOs
+  - Database entity definitions
+  - Validation tags and logic
+  - JSON serialization annotations
+
+#### `/server/pkg/`
+- **Purpose**: Library code that external applications can use
+- **Contents**:
+  - Public interfaces and contracts
+  - Utility functions
+  - Common constants and enums
+  - Shared data structures
 
 #### `/server/integTests/`
 - **Purpose**: Integration testing for server components
@@ -125,7 +179,8 @@ sdks/{language}/
 
 ### `/cli/` - Command Line Interface
 
-- **Purpose**: CLI tools for operations and development
+- **Purpose**: CLI tools for operations and development, implemented in **Go** for consistency with the server
+- **Technology**: Go (Golang) using Cobra CLI framework
 - **Features**:
   - Timer CRUD operations from command line
   - Bulk timer import/export utilities
