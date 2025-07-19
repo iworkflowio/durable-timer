@@ -63,7 +63,7 @@ All SDKs provide the following features:
 
 ### Go
 ```go
-import "github.com/indeed/durable-timer/sdks/go"
+import "github.com/iworkflowio/durable-timer/sdks/go"
 
 client := timer.NewClient("https://timer-service.example.com")
 timer, err := client.CreateTimer(ctx, "notifications", "user-123", &timer.CreateRequest{
@@ -90,7 +90,7 @@ timer = client.create_timer(
 
 ### JavaScript/TypeScript
 ```typescript
-import { TimerClient } from '@indeed/timer-sdk';
+import { TimerClient } from '@iworkflowio/timer-sdk';
 
 const client = new TimerClient('https://timer-service.example.com');
 const timer = await client.createTimer('notifications', 'user-123', {

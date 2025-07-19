@@ -44,7 +44,7 @@ make install
 
 ### Using Go Install
 ```bash
-go install github.com/indeed/durable-timer/cli@latest
+go install github.com/iworkflowio/durable-timer/cli@latest
 ```
 
 ## Quick Start

@@ -15,7 +15,7 @@ The Go SDK provides a comprehensive client library for interacting with the time
 ## Installation
 
 ```bash
-go get github.com/indeed/durable-timer/sdks/go
+go get github.com/iworkflowio/durable-timer/sdks/go
 ```
 
 ## Quick Start
@@ -30,7 +30,7 @@ import (
     "fmt"
     "time"
 
-    timer "github.com/indeed/durable-timer/sdks/go"
+    timer "github.com/iworkflowio/durable-timer/sdks/go"
 )
 
 func main() {

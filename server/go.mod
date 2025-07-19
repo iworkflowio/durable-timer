@@ -1,4 +1,4 @@
-module github.com/indeed/durable-timer/server
+module github.com/iworkflowio/durable-timer/server
 
 go 1.21
 
