@@ -136,6 +136,14 @@ Each decision should include:
 - **Impact**: Enables high-performance concurrent timer execution, simplified deployment and operations, consistent development experience across server and CLI, leverages Go's strong ecosystem for distributed systems
 - **Status**: Active
 
+### [Date: 2025-07-20] Development Cassandra Docker Compose Setup
+- **Context**: Need a reliable development environment for the timer service using Cassandra as the database backend. Must automatically initialize database schema, provide clean state for each development session, and be easy to start/stop.
+- **Decision**: Implement two-container Docker Compose setup: main Cassandra service for database, separate initialization service for schema setup. Use health check dependencies, no persistent volumes for fresh state, and same Cassandra image for initialization to leverage built-in cqlsh tool.
+- **Rationale**: Separate initialization container provides clean separation of concerns and reliable startup sequence. Using health check dependencies ensures Cassandra is ready before initialization. No persistent volumes gives fresh database state for reproducible development. Same image for init service provides compatible cqlsh without additional dependencies.
+- **Alternatives**: Single container with custom entrypoint (unreliable), Python container with cassandra-driver (complex), persistent volumes (stale data issues), external initialization scripts (not containerized)
+- **Impact**: Reliable automated database initialization, reproducible development environment, clean container separation, simplified maintenance using standard Cassandra tools
+- **Status**: Active
+
 ### [Date: TBD] Technology Stack Selection
 - **Context**: Choose programming languages, frameworks, and core technologies
 - **Decision**: [To be determined]
