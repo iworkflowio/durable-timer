@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # Cassandra Database
+  cassandra:
+    image: cassandra:4.1
+    container_name: timer-cassandra
+    hostname: cassandra
+    environment:
+      - CASSANDRA_CLUSTER_NAME=timer_cluster
+      - CASSANDRA_DATACENTER=datacenter1
+      - CASSANDRA_RACK=rack1
+      - CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch
+      - CASSANDRA_NUM_TOKENS=256
+      - HEAP_NEWSIZE=128M
+      - MAX_HEAP_SIZE=1024M
+      - CASSANDRA_SEEDS=cassandra
+      - CASSANDRA_USERNAME=cassandra
+      - CASSANDRA_PASSWORD=cassandra
+    ports:
+      - "9042:9042"   # CQL native transport
+    volumes:
+      - ./scripts/cassandra-init.cql:/docker-entrypoint-initdb.d/01-init.cql:ro
+    networks:
+      - timer-network
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe keyspaces'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+
+networks:
+  timer-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16 
