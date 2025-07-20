@@ -144,6 +144,14 @@ Each decision should include:
 - **Impact**: Reliable automated database initialization, reproducible development environment, clean container separation, simplified maintenance using standard Cassandra tools
 - **Status**: Active
 
+### [Date: 2025-07-20] Unified Database Schema Design
+- **Context**: Previous database designs varied significantly across different databases, with complex primary key strategies and database-specific optimizations that created implementation complexity and inconsistent performance patterns.
+- **Decision**: Implement universal `(shard_id, execute_at, timer_uuid)` primary key design across all databases with `timer_id` as unique index. Use UUID for uniqueness instead of complex constraints, and ensure execute_at is first clustering key for optimal execution performance.
+- **Rationale**: Eliminates database-specific complexity while maintaining optimal performance. UUID provides simple uniqueness without complex collision handling. execute_at first optimizes core timer execution workload. Consistent design enables easier testing, migration, and multi-database support.
+- **Alternatives**: Database-specific optimizations, timer_id in primary key for uniqueness, separate primary keys for different databases, complex uniqueness constraints
+- **Impact**: Simplified implementation with no database-specific logic, consistent performance patterns across all databases, easier database migration and multi-database environments, optimal performance for both execution and CRUD operations
+- **Status**: Active
+
 ### [Date: TBD] Technology Stack Selection
 - **Context**: Choose programming languages, frameworks, and core technologies
 - **Decision**: [To be determined]

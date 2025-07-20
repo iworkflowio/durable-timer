@@ -63,45 +63,45 @@ Groups support different scale requirements:
 
 ## Table Schema Design
 
-### Core Timer Table General Idea
-
-**Note**: The schema below represents the conceptual data model. Actual table designs vary significantly based on database-specific optimization strategies and feature availability:
-
-- **Primary Key Structure**: Some databases support non-unique primary keys (enabling smaller, optimized indexes), while others require unique primary keys (necessitating inclusion of timer_id)
-- **Index Strategy**: Clustering/sorting capabilities differ across databases, affecting whether execute_at or timer_id should be prioritized in primary keys
-- **Data Types**: Native timestamp, JSON, and partitioning support varies by database
-- **Uniqueness Constraints**: Methods for enforcing timer_id uniqueness differ (separate unique indexes vs. primary key inclusion)
-
-See database-specific implementations below for actual optimized schemas.
-
+### General Idea For All Databases
+* Use a single table design.
+* Use shardId as partition key (if supporting partitioning)
+* Use consistent `execute_at + uuid` primary key and clustering, and `timer_id` as unique index. 
 ```sql
--- Conceptual schema (adapted per database)
+-- Universal schema design (consistent across all databases)
 CREATE TABLE timers (
     shard_id        INT NOT NULL,           -- Partition key
-    timer_id        VARCHAR(255) NOT NULL,  -- Primary key component  
+    execute_at      TIMESTAMP NOT NULL,     -- Primary clustering key for execution queries
+    timer_uuid      UUID NOT NULL,          -- UUID for uniqueness
+    timer_id        VARCHAR(255) NOT NULL,  -- Business key (unique index)
     group_id        VARCHAR(255) NOT NULL,  -- Group identifier
-    execute_at      TIMESTAMP NOT NULL,     -- Execution time (indexed)
     callback_url    VARCHAR(2048) NOT NULL, -- HTTP callback URL
     payload         JSON,                   -- Custom payload data
     retry_policy    JSON,                   -- Retry configuration
     callback_timeout VARCHAR(32),           -- Timeout duration
     created_at      TIMESTAMP NOT NULL,     -- Creation timestamp
     updated_at      TIMESTAMP NOT NULL,     -- Last update timestamp
-    executed_at     TIMESTAMP,              -- Execution timestamp (nullable)
     
-    PRIMARY KEY (shard_id, timer_id)
+    PRIMARY KEY   (shard_id, execute_at, timer_uuid) and CLUSTERING
 ) PARTITION BY HASH(shard_id);
 
--- Local index for time-based queries
-CREATE INDEX idx_timers_execute_at ON timers (shard_id, execute_at);
+-- Unique index for timer_id lookups and CRUD operations
+CREATE UNIQUE INDEX idx_timer_id ON timers (shard_id, timer_id);
 ```
  
+ This provides:
+
+- **Optimal Performance**: `execute_at` first for fast timer execution queries
+- **UUID for Uniqueness**: Eliminates complex uniqueness handling
+- **timer_id Index**: Efficient CRUD operations via unique index
+- **Consistent Design**: Same primary key strategy across all database types
 
 ### Field Details
 
 | Field | Type | Purpose | Notes |
 |-------|------|---------|--------|
 | `shard_id` | INT | Partitioning key | Computed from groupId + timerId |
+| `timer_uuid` | UUID | Uniqueness key | Auto-generated UUID |
 | `timer_id` | VARCHAR(255) | Timer identifier | Unique within group |
 | `group_id` | VARCHAR(255) | Group identifier | For configuration lookup |
 | `execute_at` | TIMESTAMP | Execution time | Indexed for range queries |
@@ -111,7 +111,6 @@ CREATE INDEX idx_timers_execute_at ON timers (shard_id, execute_at);
 | `callback_timeout` | VARCHAR(32) | Request timeout | Duration string (e.g., "30s") |
 | `created_at` | TIMESTAMP | Creation time | Audit trail |
 | `updated_at` | TIMESTAMP | Last modification | Optimistic locking |
-| `executed_at` | TIMESTAMP | Execution time | Nullable, set when executed |
 
 ## Design Trade-offs
 
@@ -219,6 +218,7 @@ Secondary Index:  (shard_id, timer_id)             -- For CRUD operations
 CREATE TABLE timers (
     shard_id int,
     execute_at timestamp,
+    timer_uuid uuid,
     timer_id text,
     group_id text,
     callback_url text,
@@ -227,21 +227,14 @@ CREATE TABLE timers (
     callback_timeout text,
     created_at timestamp,
     updated_at timestamp,
-    executed_at timestamp,
-    PRIMARY KEY (shard_id, execute_at, timer_id)
-) WITH CLUSTERING ORDER BY (execute_at ASC, timer_id ASC);
+    PRIMARY KEY (shard_id, execute_at, timer_uuid)
+) WITH CLUSTERING ORDER BY (execute_at ASC, timer_uuid ASC);
 
--- Secondary index for timer CRUD operations
+-- Unique index for timer_id lookups and CRUD operations
 CREATE INDEX idx_timer_id ON timers (shard_id, timer_id);
 ```
 
-**Key Features**:
-- **Partitioning**: Native support via `shard_id` partition key
-- **Time-Optimized Clustering**: `execute_at` as primary clustering column for high-frequency execution queries
-- **Uniqueness**: `timer_id` in clustering key ensures uniqueness when timers have same execute_at
-- **Secondary Index**: Local index on `(shard_id, timer_id)` for CRUD operations
-- **Consistency**: Tunable consistency levels (QUORUM recommended)
-- **Scaling**: Automatic data distribution across nodes
+
 
 **Query Patterns**:
 ```cql
@@ -257,12 +250,7 @@ SELECT * FROM timers
 WHERE shard_id = ? AND timer_id = ?;
 ```
 
-**Design Rationale**:
-- **Primary Optimization**: Timer execution is the core high-frequency operation of the service
-- **Query Frequency**: Execution scans happen continuously (every few seconds), CRUD operations are occasional
-- **Storage Order**: Physical storage sorted by execute_at enables extremely fast range scans
-- **Trade-off**: Accept secondary index cost for less frequent CRUD operations to optimize core execution performance
-- **Performance**: Execution queries leverage clustering for O(log n) performance, CRUD uses local secondary index
+
 
 ### MongoDB
 
@@ -272,7 +260,8 @@ WHERE shard_id = ? AND timer_id = ?;
 {
   _id: ObjectId(),  // MongoDB default
   shardId: NumberInt(286),
-  executeAt: ISODate("2024-12-20T15:30:00Z"),  // Moved up for primary indexing
+  executeAt: ISODate("2024-12-20T15:30:00Z"),
+  timerUuid: UUID("550e8400-e29b-41d4-a716-446655440000"),
   timerId: "user-reminder-123", 
   groupId: "notifications",
   callbackUrl: "https://api.example.com/webhook",
@@ -286,8 +275,7 @@ WHERE shard_id = ? AND timer_id = ?;
   },
   callbackTimeout: "30s",
   createdAt: ISODate("2024-12-19T10:00:00Z"),
-  updatedAt: ISODate("2024-12-19T10:00:00Z"),
-  executedAt: null
+  updatedAt: ISODate("2024-12-19T10:00:00Z")
 }
 ```
 
@@ -299,20 +287,14 @@ sh.enableSharding("timerservice")
 // Shard collection on shardId
 sh.shardCollection("timerservice.timers", {shardId: 1})
 
-// Primary compound index optimized for high-frequency execution queries (non-unique, smaller)
-db.timers.createIndex({shardId: 1, executeAt: 1})
+// Primary compound index for timer execution queries
+db.timers.createIndex({shardId: 1, executeAt: 1, timerUuid: 1})
 
-// Unique index for timer identification and CRUD operations  
+// Unique index for timer_id CRUD operations  
 db.timers.createIndex({shardId: 1, timerId: 1}, {unique: true})
 ```
 
-**Key Features**:
-- **Native Sharding**: Built-in shard key support
-- **Optimized Primary Index**: Smaller (shardId, executeAt) index for fast execution queries
-- **Separate Uniqueness**: Dedicated unique index on (shardId, timerId) for constraints and CRUD
-- **Flexible Schema**: JSON-native storage for payload and retry policy
-- **Performance**: Smaller primary index improves query performance and storage efficiency
-- **Horizontal Scaling**: Automatic balancing across shards
+
 
 **Query Patterns**:
 ```javascript
@@ -337,8 +319,9 @@ db.timers.findOne({
 ```sql
 CREATE TABLE timers (
     shard_id INT NOT NULL,
-    execute_at TIMESTAMP(3) NOT NULL,  -- Primary clustering column for execution queries
-    timer_id VARCHAR(255) NOT NULL,    -- Part of primary key for uniqueness
+    execute_at TIMESTAMP(3) NOT NULL,
+    timer_uuid CHAR(36) NOT NULL,      -- UUID as string
+    timer_id VARCHAR(255) NOT NULL,
     group_id VARCHAR(255) NOT NULL,
     callback_url VARCHAR(2048) NOT NULL,
     payload JSON,
@@ -346,19 +329,11 @@ CREATE TABLE timers (
     callback_timeout VARCHAR(32) DEFAULT '30s',
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-    executed_at TIMESTAMP(3) NULL,
-    PRIMARY KEY (shard_id, execute_at, timer_id),
-    KEY idx_timer_id (shard_id, timer_id)  -- Secondary index for CRUD operations
+    PRIMARY KEY (shard_id, execute_at, timer_uuid),
+    UNIQUE KEY idx_timer_id (shard_id, timer_id)  -- Unique index for CRUD operations
 ) PARTITION BY HASH(shard_id) PARTITIONS 1024;
 ```
 
-**Key Features**:
-- **MySQL Compatibility**: Standard SQL with MySQL extensions
-- **Native Partitioning**: HASH partitioning on shard_id
-- **Time-Optimized Primary Key**: execute_at as primary clustering column for fast execution queries
-- **JSON Support**: Native JSON data type for flexible fields
-- **Secondary Index**: Separate index for timer_id lookups
-- **HTAP**: Hybrid transactional and analytical processing
 
 **Query Patterns**:
 ```sql
@@ -388,7 +363,7 @@ WHERE shard_id = ? AND timer_id = ?;
       "KeyType": "HASH"
     },
     {
-      "AttributeName": "executeAt", 
+      "AttributeName": "executeAt_timerUuid", 
       "KeyType": "RANGE"
     }
   ],
@@ -398,7 +373,7 @@ WHERE shard_id = ? AND timer_id = ?;
       "AttributeType": "N"
     },
     {
-      "AttributeName": "executeAt",
+      "AttributeName": "executeAt_timerUuid",
       "AttributeType": "S"
     },
     {
@@ -428,25 +403,26 @@ WHERE shard_id = ? AND timer_id = ?;
 ```json
 {
   "shardId": {"N": "286"},
-  "executeAt": {"S": "2024-12-20T15:30:00Z"},  // Primary range key for execution queries
-  "timerId": {"S": "user-reminder-123"},       // Included in LSI for CRUD operations
+  "executeAt_timerUuid": {"S": "2024-12-20T15:30:00Z#550e8400-e29b-41d4-a716-446655440000"},
+  "executeAt": {"S": "2024-12-20T15:30:00Z"},
+  "timerUuid": {"S": "550e8400-e29b-41d4-a716-446655440000"},
+  "timerId": {"S": "user-reminder-123"},
   "groupId": {"S": "notifications"},
   "callbackUrl": {"S": "https://api.example.com/webhook"},
   "payload": {"S": "{\"userId\":\"user123\"}"},
   "retryPolicy": {"S": "{\"maxRetries\":3}"},
   "callbackTimeout": {"S": "30s"},
   "createdAt": {"S": "2024-12-19T10:00:00Z"},
-  "updatedAt": {"S": "2024-12-19T10:00:00Z"},
-  "executedAt": {"NULL": true}
+  "updatedAt": {"S": "2024-12-19T10:00:00Z"}
 }
 ```
 
 **Key Features**:
+- **Consistent Design**: Same logical primary key pattern as all databases
 - **Managed Service**: Fully managed, serverless scaling
-- **Time-Optimized Primary Key**: executeAt as range key enables fast execution queries
+- **Composite Range Key**: `executeAt#timerUuid` for uniqueness and ordering
 - **LSI for CRUD**: Local Secondary Index on timerId for timer CRUD operations
 - **Consistent Hashing**: Built-in data distribution
-- **Uniqueness**: Combined (shardId, executeAt, timerId) ensures uniqueness
 
 **Note on Uniqueness**: Since multiple timers can have the same executeAt, we include timerId in the item structure to maintain uniqueness. DynamoDB will handle items with identical primary keys by overwriting, so application logic must ensure executeAt + timerId combinations are unique.
 
@@ -494,6 +470,7 @@ While the distributed databases above provide native sharding and horizontal sca
 CREATE TABLE timers (
     shard_id INT NOT NULL,
     execute_at TIMESTAMP(3) NOT NULL,
+    timer_uuid CHAR(36) NOT NULL,      -- UUID as string
     timer_id VARCHAR(255) NOT NULL,
     group_id VARCHAR(255) NOT NULL,
     callback_url VARCHAR(2048) NOT NULL,
@@ -502,18 +479,11 @@ CREATE TABLE timers (
     callback_timeout VARCHAR(32) DEFAULT '30s',
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-    executed_at TIMESTAMP(3) NULL,
-    PRIMARY KEY (shard_id, execute_at, timer_id),
-    INDEX idx_timer_lookup (shard_id, timer_id)
+    PRIMARY KEY (shard_id, execute_at, timer_uuid),
+    UNIQUE INDEX idx_timer_lookup (shard_id, timer_id)
 ) PARTITION BY HASH(shard_id) PARTITIONS 32;
 ```
 
-**Key Features**:
-- **Native Partitioning**: HASH partitioning on shard_id for data distribution
-- **JSON Support**: Native JSON data type for payload and retry_policy (MySQL 5.7+)
-- **Microsecond Precision**: TIMESTAMP(3) for millisecond precision timing
-- **Auto-Update Timestamps**: Automatic updated_at maintenance
-- **Optimized Primary Key**: Clustered by execute_at for fast execution queries
 
 **Query Patterns**:
 ```sql
@@ -538,6 +508,7 @@ WHERE shard_id = 286 AND timer_id = 'user-reminder-123';
 CREATE TABLE timers (
     shard_id INTEGER NOT NULL,
     execute_at TIMESTAMP(3) NOT NULL,
+    timer_uuid UUID NOT NULL,
     timer_id VARCHAR(255) NOT NULL,
     group_id VARCHAR(255) NOT NULL,
     callback_url VARCHAR(2048) NOT NULL,
@@ -546,36 +517,19 @@ CREATE TABLE timers (
     callback_timeout VARCHAR(32) DEFAULT '30s',
     created_at TIMESTAMP(3) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP(3) NOT NULL DEFAULT NOW(),
-    executed_at TIMESTAMP(3),
-    PRIMARY KEY (shard_id, execute_at, timer_id)
+    PRIMARY KEY (shard_id, execute_at, timer_uuid)
 ) PARTITION BY HASH (shard_id);
 
 -- Create partitions (example for 32 partitions)
 -- CREATE TABLE timers_p0 PARTITION OF timers FOR VALUES WITH (modulus 32, remainder 0);
 -- ... repeat for p1 through p31
 
--- Secondary index for timer lookups
-CREATE INDEX idx_timer_lookup ON timers (shard_id, timer_id);
+-- Unique index for timer lookups
+CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, timer_id);
 
--- Trigger for updated_at maintenance
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ language 'plpgsql';
 
-CREATE TRIGGER update_timers_updated_at BEFORE UPDATE ON timers 
-FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 ```
 
-**Key Features**:
-- **Native Hash Partitioning**: Built-in partitioning by shard_id (PostgreSQL 11+)
-- **JSONB Support**: Binary JSON storage with indexing capabilities for payload/retry_policy
-- **High Precision Timestamps**: Millisecond precision with timezone support
-- **ACID Compliance**: Full transactional guarantees for consistency
-- **Advanced Indexing**: Partial indexes, expression indexes, and JSON indexing capabilities
 
 **Query Patterns**:
 ```sql
@@ -600,6 +554,7 @@ WHERE shard_id = 286 AND timer_id = 'user-reminder-123';
 CREATE TABLE timers (
     shard_id NUMBER(10) NOT NULL,
     execute_at TIMESTAMP(3) NOT NULL,
+    timer_uuid RAW(16) NOT NULL,       -- UUID as binary
     timer_id VARCHAR2(255) NOT NULL,
     group_id VARCHAR2(255) NOT NULL,
     callback_url VARCHAR2(2048) NOT NULL,
@@ -608,29 +563,16 @@ CREATE TABLE timers (
     callback_timeout VARCHAR2(32) DEFAULT '30s',
     created_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
-    executed_at TIMESTAMP(3),
-    PRIMARY KEY (shard_id, execute_at, timer_id)
+    PRIMARY KEY (shard_id, execute_at, timer_uuid)
 ) 
 PARTITION BY HASH (shard_id) PARTITIONS 32;
 
--- Secondary index for timer lookups
-CREATE INDEX idx_timer_lookup ON timers (shard_id, timer_id);
+-- Unique index for timer lookups
+CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, timer_id);
 
--- Trigger for updated_at maintenance
-CREATE OR REPLACE TRIGGER trg_timers_updated_at
-    BEFORE UPDATE ON timers
-    FOR EACH ROW
-BEGIN
-    :NEW.updated_at := CURRENT_TIMESTAMP;
-END;
+
 ```
 
-**Key Features**:
-- **Enterprise Partitioning**: Advanced partitioning options including hash, range, and composite
-- **JSON Validation**: CHECK constraints with IS JSON for data integrity
-- **High Availability**: RAC clustering and advanced backup/recovery features
-- **Performance**: Query optimizer and execution plan analysis tools
-- **Scalability**: Can handle very large datasets with proper configuration
 
 **Query Patterns**:
 ```sql
@@ -655,6 +597,7 @@ WHERE shard_id = 286 AND timer_id = 'user-reminder-123';
 CREATE TABLE timers (
     shard_id INT NOT NULL,
     execute_at DATETIME2(3) NOT NULL,
+    timer_uuid UNIQUEIDENTIFIER NOT NULL,
     timer_id NVARCHAR(255) NOT NULL,
     group_id NVARCHAR(255) NOT NULL,
     callback_url NVARCHAR(2048) NOT NULL,
@@ -663,8 +606,7 @@ CREATE TABLE timers (
     callback_timeout NVARCHAR(32) DEFAULT '30s',
     created_at DATETIME2(3) NOT NULL DEFAULT GETUTCDATE(),
     updated_at DATETIME2(3) NOT NULL DEFAULT GETUTCDATE(),
-    executed_at DATETIME2(3) NULL,
-    PRIMARY KEY (shard_id, execute_at, timer_id)
+    PRIMARY KEY (shard_id, execute_at, timer_uuid)
 );
 
 -- Partition function and scheme (requires SQL Server Enterprise)
@@ -686,30 +628,12 @@ AS PARTITION pf_shard_id TO ([PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
 -- DROP TABLE timers;
 -- CREATE TABLE timers (...) ON ps_shard_id(shard_id);
 
--- Secondary index for timer lookups  
-CREATE INDEX idx_timer_lookup ON timers (shard_id, timer_id);
+-- Unique index for timer lookups  
+CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, timer_id);
 
--- Trigger for updated_at maintenance
-CREATE TRIGGER trg_timers_updated_at
-ON timers
-AFTER UPDATE
-AS
-BEGIN
-    UPDATE timers 
-    SET updated_at = GETUTCDATE()
-    FROM timers t
-    INNER JOIN inserted i ON t.shard_id = i.shard_id 
-                         AND t.execute_at = i.execute_at 
-                         AND t.timer_id = i.timer_id;
-END;
+
 ```
 
-**Key Features**:
-- **Table Partitioning**: Available in Enterprise Edition for horizontal scaling
-- **JSON Validation**: ISJSON() function with CHECK constraints for data integrity
-- **High Precision**: DATETIME2(3) for millisecond precision
-- **Enterprise Features**: Advanced indexing, compression, and performance optimization
-- **Integration**: Strong integration with .NET ecosystem and Azure cloud services
 
 **Query Patterns**:
 ```sql
@@ -727,80 +651,8 @@ WHERE shard_id = 286 AND timer_id = 'user-reminder-123';
 ```
 
 
-## Query Patterns and Performance
 
-### Primary Operations
 
-#### 1. Timer Creation
-```sql
--- All databases: Insert with computed shard_id
-INSERT INTO timers (shard_id, timer_id, group_id, execute_at, ...)
-VALUES (?, ?, ?, ?, ...)
-```
-- **Performance**: Single partition write, O(1) complexity
-- **Scaling**: Distributes across shards automatically
-
-#### 2. Timer Retrieval
-```sql
--- Direct lookup by composite key
-SELECT * FROM timers 
-WHERE shard_id = ? AND timer_id = ?
-```
-- **Performance**: Single partition read, O(1) complexity
-- **Efficiency**: No cross-partition queries needed
-
-#### 3. Timer Update
-```sql
--- Update within single partition
-UPDATE timers 
-SET execute_at = ?, payload = ?, updated_at = ?
-WHERE shard_id = ? AND timer_id = ?
-```
-- **Performance**: Single partition write, O(1) complexity
-- **Consistency**: Strong consistency within partition
-
-#### 4. Timer Deletion
-```sql
--- Delete from single partition
-DELETE FROM timers 
-WHERE shard_id = ? AND timer_id = ?
-```
-- **Performance**: Single partition write, O(1) complexity
-- **Cleanup**: Immediate space reclamation (database dependent)
-
-### Timer Execution Queries
-
-#### 5. Find Due Timers
-```sql
--- Query per shard for execution
-SELECT timer_id, callback_url, payload, retry_policy
-FROM timers 
-WHERE shard_id = ? AND execute_at <= ?
-ORDER BY execute_at ASC
-LIMIT 1000
-```
-- **Performance**: Single partition scan with index
-- **Parallelization**: Can query multiple shards concurrently
-- **Efficiency**: Index on execute_at enables fast range scans
-
-## Scaling and Performance Considerations
-
-### Shard Distribution
-- **Even Distribution**: Hash function ensures uniform shard assignment
-- **Hot Spot Avoidance**: Timer IDs spread across all shards
-- **Predictable Performance**: Consistent load per shard
-
-### Execution Scheduling
-```
-For each active shard S in parallel:
-  query timers WHERE shard_id = S AND execute_at <= NOW()
-  process timers in executeAt order
-```
-
-**Benefits**:
-- **Parallelism**: Independent shard processing
-- **Scalability**: Adding shards increases throughput
-- **Fault Tolerance**: Shard failures don't affect others
 
 ### Database-Specific Optimizations
 
