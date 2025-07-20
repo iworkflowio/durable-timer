@@ -66,7 +66,9 @@ Groups support different scale requirements:
 ### General Idea For All Databases
 * Use a single table design.
 * Use shardId as partition key (if supporting partitioning)
-* Use consistent `execute_at + uuid` primary key and clustering, and `timer_id` as unique index. 
+* Under a partition, use `execute_at + uuid` primary abd clustering key
+* Under a partition, use `timer_id` as unique index. 
+
 ```sql
 -- Universal schema design (consistent across all databases)
 CREATE TABLE timers (
@@ -101,10 +103,10 @@ CREATE UNIQUE INDEX idx_timer_id ON timers (shard_id, timer_id);
 | Field | Type | Purpose | Notes |
 |-------|------|---------|--------|
 | `shard_id` | INT | Partitioning key | Computed from groupId + timerId |
-| `timer_uuid` | UUID | Uniqueness key | Auto-generated UUID |
+| `execute_at` | TIMESTAMP | Execution time | Primary + Clustering key. Indexed for range queries |
+| `timer_uuid` | UUID | Uniqueness key | Primary key. Auto-generated UUID |
 | `timer_id` | VARCHAR(255) | Timer identifier | Unique within group |
 | `group_id` | VARCHAR(255) | Group identifier | For configuration lookup |
-| `execute_at` | TIMESTAMP | Execution time | Indexed for range queries |
 | `callback_url` | VARCHAR(2048) | HTTP endpoint | Target for timer execution |
 | `payload` | JSON | Custom data | Flexible schema |
 | `retry_policy` | JSON | Retry configuration | Per-timer retry settings |
