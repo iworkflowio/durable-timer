@@ -5,7 +5,12 @@ import (
 )
 
 type (
-
+	DbError struct {
+		OriginalError      error
+		CustomMessage      string
+		ShardConditionFail bool
+		NotExists          bool
+	}
 	// DbTimer is the timer model stored in DB
 	DbTimer struct {
 
@@ -75,3 +80,18 @@ type (
 		CallbackTimeoutSeconds int32 `json:"callbackTimeoutSeconds,omitempty"`
 	}
 )
+
+func NewGenericDbError(msg string, err error) *DbError {
+	return &DbError{
+		OriginalError: err,
+		CustomMessage: msg,
+	}
+}
+
+func NewDbErrorOnShardConditionFail(msg string, err error) *DbError {
+	return &DbError{
+		OriginalError:      err,
+		CustomMessage:      msg,
+		ShardConditionFail: true,
+	}
+}

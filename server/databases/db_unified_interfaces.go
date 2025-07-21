@@ -16,37 +16,37 @@ type (
 			shardId int,
 			ownerId string,
 			metadata interface{},
-		) (shardVersion int64, err error)
+		) (shardVersion int64, err *DbError)
 
 		CreateTimer(
 			ctx context.Context,
 			shardId int, shardVersion int64, timer *DbTimer,
-		) (err error)
+		) (err *DbError)
 
 		GetTimersUpToTimestamp(
 			ctx context.Context,
 			shardId int, request *RangeGetTimersRequest,
-		) (*RangeGetTimersResponse, error)
+		) (*RangeGetTimersResponse, *DbError)
 
 		DeleteTimersUpToTimestamp(
 			ctx context.Context,
 			shardId int, shardVersion int64, request *RangeDeleteTimersRequest,
-		) (*RangeDeleteTimersResponse, error)
+		) (*RangeDeleteTimersResponse, *DbError)
 
 		UpdateTimer(
 			ctx context.Context,
 			shardId int, shardVersion int64, timerId string,
 			request *UpdateDbTimerRequest,
-		) (notExists bool, err error)
+		) (err *DbError)
 
 		GetTimer(
 			ctx context.Context,
 			shardId int, timerId string,
-		) (timer *DbTimer, notExists bool, err error)
+		) (timer *DbTimer, err *DbError)
 
 		DeleteTimer(
 			ctx context.Context,
 			shardId int, shardVersion int64, timerId string,
-		) error
+		) *DbError
 	}
 )
