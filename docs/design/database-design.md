@@ -16,10 +16,8 @@ This document describes the database design for the Distributed Durable Timer Se
 - **Scalability**: Leverages database-native partitioning for horizontal scaling
 - **Performance**: Co-locates related data for efficient queries
 
-### 3. Time-Optimized Indexing
-- **Local Index**: `executeAt` timestamp within each partition (shard)
-- **Query Pattern**: Enables efficient range scans for timer execution scheduling within each shard
-- **Sorting**: Natural time-based ordering for execution workflows
+### 3. Time-Optimized Clustering and Indexing
+- **Query Pattern**: Enables efficient range scans and deletions for timer execution within each shard
 - **Scope**: All time-based queries are shard-specific, eliminating need for cross-shard indexes
 
 ## Partitioning Strategy
@@ -83,7 +81,7 @@ Groups support different scale requirements:
 
 ## Table Schema Design
 
-### General Idea For All Databases
+### General Idea For Most Databases
 * Use a single table design.
 * Use shardId as partition key (if supporting partitioning)
 * Under a partition, use `execute_at + uuid` primary abd clustering key
@@ -134,10 +132,8 @@ CREATE UNIQUE INDEX idx_timer_id ON timers (shard_id, timer_id);
 | `created_at` | TIMESTAMP | Creation time | Audit trail |
 | `updated_at` | TIMESTAMP | Last modification | Optimistic locking |
 
-
-
-
-
+However, this may not work for every database. We will need to adjust the design for each database based on 
+the availabilities of features to support this. For example, DynamoDB doesn't support using multile columns(attributes) for sort key, and doesn't support UUID natively. And the optimization for clustering is not neccesary because this is not part of the pricing model, and there is no self-hosting option.
 
 
 
@@ -294,7 +290,7 @@ WHERE shard_id = ? AND timer_id = ?;
       "KeyType": "HASH"
     },
     {
-      "AttributeName": "executeAt_timerUuid", 
+      "AttributeName": "timerId", 
       "KeyType": "RANGE"
     }
   ],
@@ -304,24 +300,24 @@ WHERE shard_id = ? AND timer_id = ?;
       "AttributeType": "N"
     },
     {
-      "AttributeName": "executeAt_timerUuid",
+      "AttributeName": "timerId",
       "AttributeType": "S"
     },
     {
-      "AttributeName": "timerId",
+      "AttributeName": "executeAt",
       "AttributeType": "S"
     }
   ],
   "LocalSecondaryIndexes": [
     {
-      "IndexName": "timerId-index",
+      "IndexName": "executeAt-index",
       "KeySchema": [
         {
           "AttributeName": "shardId",
           "KeyType": "HASH"
         },
         {
-          "AttributeName": "timerId",
+          "AttributeName": "executeAt",
           "KeyType": "RANGE"
         }
       ]
@@ -334,10 +330,9 @@ WHERE shard_id = ? AND timer_id = ?;
 ```json
 {
   "shardId": {"N": "286"},
-  "executeAt_timerUuid": {"S": "2024-12-20T15:30:00Z#550e8400-e29b-41d4-a716-446655440000"},
+  "timerId": {"S": "user-reminder-123"},
   "executeAt": {"S": "2024-12-20T15:30:00Z"},
   "timerUuid": {"S": "550e8400-e29b-41d4-a716-446655440000"},
-  "timerId": {"S": "user-reminder-123"},
   "groupId": {"S": "notifications"},
   "callbackUrl": {"S": "https://api.example.com/webhook"},
   "payload": {"S": "{\"userId\":\"user123\"}"},
@@ -352,10 +347,11 @@ WHERE shard_id = ? AND timer_id = ?;
 
 **Query Patterns**:
 ```javascript
-// Timer execution query (optimized - uses primary key range)
+// Timer execution query (uses LSI on executeAt)
 // HIGH FREQUENCY: Executed every few seconds per shard
 {
   TableName: "timers",
+  IndexName: "executeAt-index",
   KeyConditionExpression: "shardId = :shardId AND executeAt <= :now",
   ExpressionAttributeValues: {
     ":shardId": {"N": "286"},
@@ -363,11 +359,10 @@ WHERE shard_id = ? AND timer_id = ?;
   }
 }
 
-// Direct timer lookup (uses LSI)
+// Direct timer lookup (uses primary key)
 // LOWER FREQUENCY: User-driven CRUD operations
 {
-  TableName: "timers", 
-  IndexName: "timerId-index",
+  TableName: "timers",
   KeyConditionExpression: "shardId = :shardId AND timerId = :timerId",
   ExpressionAttributeValues: {
     ":shardId": {"N": "286"},
@@ -381,7 +376,7 @@ WHERE shard_id = ? AND timer_id = ?;
 - **LSI (Local Secondary Index)**: Storage for LSI is billed at the same rate as the base table, and write costs are included in the base table's write capacity. LSI has a strict 10GB storage limit per partition, but this is manageable through proper shard management. LSI queries are always strongly consistent and operate within the same partition as the base table.
 - **GSI (Global Secondary Index)**: GSI storage is billed separately from the base table, and you pay for both read and write capacity (or on-demand) on the GSI in addition to the base table. GSI does **not** have the 10GB per-partition limit—storage is effectively unlimited and scales independently.
 - **Cost Comparison**: LSI is significantly more cost-effective for write-heavy workloads since writes don't consume additional capacity. GSI incurs additional costs for every write operation that affects the index.
-- **Design Choice**: We use LSI with `shardId` as partition key to minimize costs. The 10GB partition limit is managed through administrative controls - when a partition approaches the limit, system administrators can create new groups with higher shard counts to redistribute the load. For customers requiring unlimited partition storage, GSI support can be offered as a premium feature with higher DynamoDB costs.
+- **Design Choice**: We use LSI for timer execution queries (by executeAt) to minimize costs while using the primary key for CRUD operations (by timerId). The 10GB partition limit is managed through administrative controls - when a partition approaches the limit, system administrators can create new groups with higher shard counts to redistribute the load. For customers requiring unlimited partition storage, GSI support can be offered as a premium feature with higher DynamoDB costs.
 
 ## Traditional SQL Databases
 

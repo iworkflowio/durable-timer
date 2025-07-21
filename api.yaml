@@ -194,8 +194,7 @@ components:
           maxLength: 255
         groupId:
           type: string
-          description: Group identifier for the timer. It is used for scalability. Must be one of the groupIds enabled in the system. Must be provided in read/write operation requests for lookup.
-          default: "default"
+          description: Group identifier for the timer. It is used for scalability. Must be one of the groupIds enabled in the system. Must be provided in read/write operation requests for lookup. If not provided, the timer will be created in the default group configured in the system.
           example: "xlarge-scale-group"
         executeAt:
           type: string
