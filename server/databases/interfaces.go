@@ -12,9 +12,16 @@ type (
 	TimerStore interface {
 		Close() error
 
+		ClaimShardOwnership(
+			ctx context.Context,
+			shardId int,
+			ownerId string,
+			metadata interface,
+		) (shardVersion int64, err error)
+
 		CreateTimer(
 			ctx context.Context,
-			shardId int, timer *genapi.Timer,
+			shardId int, shardVersion int64, timer *genapi.Timer,
 		) (err error)
 
 		GetTimersUpToTimestamp(
@@ -24,12 +31,12 @@ type (
 
 		DeleteTimersUpToTimestamp(
 			ctx context.Context,
-			shardId int, request *RangeDeleteTimersRequest,
+			shardId int, shardVersion int64, request *RangeDeleteTimersRequest,
 		) (*RangeDeleteTimersResponse, error)
 
 		UpdateTimer(
 			ctx context.Context,
-			shardId int, timerId string,
+			shardId int, shardVersion int64, timerId string,
 			request *genapi.UpdateTimerRequest,
 		) (notExists bool, err error)
 
@@ -40,7 +47,7 @@ type (
 
 		DeleteTimer(
 			ctx context.Context,
-			shardId int, timerId string,
+			shardId int, shardVersion int64, timerId string,
 		) error
 	}
 )

@@ -22,9 +22,9 @@ type (
 		CallbackUrl string `json:"callbackUrl"`
 
 		// Custom payload data
-		Payload map[string]interface{} `json:"payload,omitempty"`
+		Payload interface{} `json:"payload,omitempty"`
 
-		RetryPolicy map[string]interface{} `json:"retryPolicy,omitempty"`
+		RetryPolicy interface{} `json:"retryPolicy,omitempty"`
 
 		// Timeout for the HTTP callback in seconds
 		CallbackTimeoutSeconds int32 `json:"callbackTimeoutSeconds,omitempty"`
@@ -48,11 +48,8 @@ type (
 		Timers []*DbTimer
 	}
 
+	// RangeDeleteTimersRequest is the request to delete timers from a range of timestamps
 	RangeDeleteTimersRequest struct {
-		// Delete timers from this timestamp
-		// This is necessary because of racing conditions.
-		// There could be another instance of the service "owning" the shard and performing the execution/deletion.
-		// So we need to delete exactly the timers that are owned by this instance.
 		StartTimestamp time.Time
 		EndTimestamp   time.Time
 	}
@@ -70,9 +67,9 @@ type (
 		CallbackUrl string `json:"callbackUrl,omitempty"`
 
 		// New payload data
-		Payload map[string]interface{} `json:"payload,omitempty"`
+		Payload interface{} `json:"payload,omitempty"`
 
-		RetryPolicy map[string]interface{} `json:"retryPolicy,omitempty"`
+		RetryPolicy interface{} `json:"retryPolicy,omitempty"`
 
 		// New timeout for the HTTP callback in seconds
 		CallbackTimeoutSeconds int32 `json:"callbackTimeoutSeconds,omitempty"`
