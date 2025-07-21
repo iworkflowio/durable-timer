@@ -2,7 +2,6 @@ package databases
 
 import (
 	"context"
-	genapi "github.com/iworkflowio/durable-timer/genapi/go"
 )
 
 // TimerStore is the unified interface for all timer databases
@@ -16,12 +15,12 @@ type (
 			ctx context.Context,
 			shardId int,
 			ownerId string,
-			metadata interface,
+			metadata interface{},
 		) (shardVersion int64, err error)
 
 		CreateTimer(
 			ctx context.Context,
-			shardId int, shardVersion int64, timer *genapi.Timer,
+			shardId int, shardVersion int64, timer *DbTimer,
 		) (err error)
 
 		GetTimersUpToTimestamp(
@@ -37,13 +36,13 @@ type (
 		UpdateTimer(
 			ctx context.Context,
 			shardId int, shardVersion int64, timerId string,
-			request *genapi.UpdateTimerRequest,
+			request *UpdateDbTimerRequest,
 		) (notExists bool, err error)
 
 		GetTimer(
 			ctx context.Context,
 			shardId int, timerId string,
-		) (timer *genapi.Timer, notExists bool, err error)
+		) (timer *DbTimer, notExists bool, err error)
 
 		DeleteTimer(
 			ctx context.Context,

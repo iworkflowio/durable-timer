@@ -24,5 +24,5 @@ type RetryPolicy struct {
 	BackoffMultiplier float32 `json:"backoffMultiplier,omitempty"`
 
 	// Maximum retry interval
-	MaxInterval ModelString `json:"maxInterval,omitempty"`
+	MaxInterval string `json:"maxInterval,omitempty"`
 }

@@ -330,7 +330,7 @@ components:
           description: Multiplier for exponential backoff
           example: 2.0
         maxInterval:
-          type: string"
+          type: string
           description: Maximum retry interval
           example: "5m"
 
