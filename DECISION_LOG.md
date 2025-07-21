@@ -135,6 +135,13 @@ Each decision should include:
 - **Alternatives**: Use composite range key (executeAt#timerUuid), use Global Secondary Index instead of LSI, separate tables for different access patterns
 - **Impact**: DynamoDB implementation differs from other databases but provides optimal cost and performance characteristics for the managed service environment, maintains logical consistency while adapting to platform constraints
 
+### [Date: 2025-07-20] Versioned Shard Ownership Management
+- **Context**: Distributed timer service instances use eventually consistent membership frameworks (gossip-based), creating race conditions where multiple instances may simultaneously claim the same shard during network partitions or membership changes. Critical race condition: Instance A loads timers for execution window, Instance B claims same shard and inserts new timer into window, Instance A performs range delete without executing Instance B's timer.
+- **Decision**: Implement dedicated `shards` table with optimistic concurrency control using version numbers. Ownership protocol: instances claim shards by incrementing version atomically, cache version in memory, verify version before all write operations, gracefully exit if version mismatch detected (ownership lost).
+- **Rationale**: Version-based ownership provides atomic ownership claims through database guarantees. Memory caching enables fast conflict detection without per-operation database round trips. Graceful exit ensures clean ownership transfer without data corruption. Significantly reduces race condition window from membership framework delays to single database operation.
+- **Alternatives**: Leader election with external coordination service, timestamp-based ownership claims, advisory locking, accept eventual consistency risks
+- **Impact**: Adds second table to schema but provides strong ownership guarantees. Prevents timer execution race conditions. Enables safe distributed processing with minimal coordination overhead. Memory version caching provides excellent performance characteristics.
+
 ---
 
 *This log should be updated whenever significant decisions are made during the project development.* 

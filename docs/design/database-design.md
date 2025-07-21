@@ -4,21 +4,6 @@
 
 This document describes the database design for the Distributed Durable Timer Service, focusing on distributed database implementations that support horizontal scaling to millions of concurrent timers. The design emphasizes partitioning strategies that enable efficient timer operations across distributed systems.
 
-## Core Design Principles
-
-### 1. Deterministic Partitioning
-- **Partition Key**: `shardId` - computed deterministically from `groupId` and `timerId`
-- **Benefits**: Enables direct shard targeting for all operations, eliminates scatter-gather queries
-- **Consistency**: Same input always produces same shard placement
-
-### 2. Single Table Design
-- **Rationale**: Minimizes cross-table operations, simplifies data model, reduces operational complexity
-- **Scalability**: Leverages database-native partitioning for horizontal scaling
-- **Performance**: Co-locates related data for efficient queries
-
-### 3. Time-Optimized Clustering and Indexing
-- **Query Pattern**: Enables efficient range scans and deletions for timer execution within each shard
-- **Scope**: All time-based queries are shard-specific, eliminating need for cross-shard indexes
 
 ## Partitioning Strategy
 
@@ -54,10 +39,7 @@ Groups support different scale requirements:
 | large | High-Volume | 1024 | < 10M timers |
 | xlarge | Massive Scale | 4096 | < 100M timers |
 
-**Benefits**:
-- **Flexibility**: Different groups can use different shard counts
-- **Isolation**: Workloads don't interfere with each other
-- **Scaling**: Can adjust shard count per group as needed
+
 
 #### Group-Based Partitioning Trade-offs
 
@@ -77,9 +59,49 @@ Groups support different scale requirements:
 - **Operational Benefits**: The operational simplicity of avoiding resharding outweighs the minor API complexity increase
 - **Future Flexibility**: Groups can be pre-allocated with appropriate shard counts based on expected load, reducing the need for runtime resharding
 
-**Conclusion**: The design trades minor API complexity for significant operational simplicity. Users learn one additional concept (`groupId`) but gain predictable performance and avoid the complexity and risks associated with online resharding operations. This follows established patterns in distributed systems where exposing partitioning concepts to users is a proven approach for achieving scale.
 
-## Table Schema Design
+
+## Shard Ownership Management
+
+### Problem Statement
+
+In distributed systems, membership frameworks (e.g., Consul, etcd, Raft) provide eventual consistency through gossip-based protocols. This creates a critical race condition where multiple service instances may simultaneously believe they own the same shard during membership changes or network partitions.
+
+**Race Condition Example**:
+1. Instance A owns shard 42 and loads timers for execution (T+1 minute window)
+2. Network partition occurs, Instance B also claims shard 42
+3. Instance B inserts new timer into T+1 minute window
+4. Instance A executes loaded timers and performs range delete
+5. Instance B's timer is deleted without execution ❌
+
+### Solution: Versioned Shard Ownership
+
+We implement optimistic concurrency control using a dedicated `shards` table with version-based ownership claims.
+
+**Shard Ownership Protocol**:
+1. **Claim Shard**: Instance loads current version, increments it, and stores new version
+2. **Memory Cache**: Instance keeps version in memory for all subsequent operations
+3. **Version Check**: During any write operation, instance verifies version hasn't changed within a transaction
+4. **Graceful Exit**: If version mismatch detected, instance releases shard ownership
+
+
+### Shards Table Schema
+
+```sql
+-- Universal shards table design
+CREATE TABLE shards (
+    shard_id            INT NOT NULL,           -- Shard identifier (partition key for databases that support it)
+    version             BIGINT NOT NULL,        -- Version number for optimistic concurrency
+    owner_id   VARCHAR(255),                    -- Service instance identifier and/or address
+    claimed_at          TIMESTAMP NOT NULL,     -- Ownership claim timestamp
+    metadata            JSON,                   -- Additional instance metadata
+    
+    PRIMARY KEY (shard_id)
+);
+```
+
+
+## Timer Schema Design
 
 ### General Idea For Most Databases
 * Use a single table design.
@@ -116,21 +138,6 @@ CREATE UNIQUE INDEX idx_timer_id ON timers (shard_id, timer_id);
 - **timer_id Index**: Efficient CRUD operations via unique index
 - **Consistent Design**: Same primary key strategy across all database types
 
-### Field Details
-
-| Field | Type | Purpose | Notes |
-|-------|------|---------|--------|
-| `shard_id` | INT | Partitioning key | Computed from groupId + timerId |
-| `execute_at` | TIMESTAMP | Execution time | Primary + Clustering key. Indexed for range queries |
-| `timer_uuid` | UUID | Uniqueness key | Primary key. Auto-generated UUID |
-| `timer_id` | VARCHAR(255) | Timer identifier | Unique within group |
-| `group_id` | VARCHAR(255) | Group identifier | For configuration lookup |
-| `callback_url` | VARCHAR(2048) | HTTP endpoint | Target for timer execution |
-| `payload` | JSON | Custom data | Flexible schema |
-| `retry_policy` | JSON | Retry configuration | Per-timer retry settings |
-| `callback_timeout` | VARCHAR(32) | Request timeout | Duration string (e.g., "30s") |
-| `created_at` | TIMESTAMP | Creation time | Audit trail |
-| `updated_at` | TIMESTAMP | Last modification | Optimistic locking |
 
 However, this may not work for every database. We will need to adjust the design for each database based on 
 the availabilities of features to support this. For example, DynamoDB doesn't support using multile columns(attributes) for sort key, and doesn't support UUID natively. And the optimization for clustering is not neccesary because this is not part of the pricing model, and there is no self-hosting option.
@@ -160,6 +167,16 @@ CREATE TABLE timers (
 
 -- Unique index for timer_id lookups and CRUD operations
 CREATE INDEX idx_timer_id ON timers (shard_id, timer_id);
+
+-- Shards table for ownership management
+CREATE TABLE shards (
+    shard_id int,
+    version bigint,
+    owner_id text,
+    claimed_at timestamp,
+    metadata text,  -- JSON serialized
+    PRIMARY KEY (shard_id)
+);
 ```
 
 
@@ -222,6 +239,25 @@ db.timers.createIndex({shardId: 1, executeAt: 1, timerUuid: 1})
 db.timers.createIndex({shardId: 1, timerId: 1}, {unique: true})
 ```
 
+**Shards Collection**:
+```javascript
+// Collection: shards
+{
+  _id: ObjectId(),
+  shardId: NumberInt(286),  // Primary identifier
+  version: NumberLong(42),  // Version for optimistic concurrency
+  ownerId: "instance-uuid-1234",
+  claimedAt: ISODate("2024-12-19T10:00:00Z"),
+  metadata: {
+    processId: 12345,
+    serviceVersion: "1.0.0",
+    nodeId: "node-001"
+  }
+}
+
+// Indexes
+db.shards.createIndex({shardId: 1}, {unique: true})
+```
 
 **Query Patterns**:
 ```javascript
@@ -259,6 +295,16 @@ CREATE TABLE timers (
     PRIMARY KEY (shard_id, execute_at, timer_uuid) CLUSTERED,  -- Explicit clustering
     UNIQUE KEY idx_timer_id (shard_id, timer_id)  -- Unique index for CRUD operations
 ) PARTITION BY HASH(shard_id) PARTITIONS 1024;
+
+-- Shards table for ownership management
+CREATE TABLE shards (
+    shard_id INT NOT NULL,
+    version BIGINT NOT NULL,
+    owner_id VARCHAR(255),
+    claimed_at TIMESTAMP(3) NOT NULL,
+    metadata JSON,
+    PRIMARY KEY (shard_id) CLUSTERED
+) PARTITION BY HASH(shard_id) PARTITIONS 32;  -- Fewer partitions as there are fewer shards
 ```
 
 
@@ -378,6 +424,36 @@ WHERE shard_id = ? AND timer_id = ?;
 - **Cost Comparison**: LSI is significantly more cost-effective for write-heavy workloads since writes don't consume additional capacity. GSI incurs additional costs for every write operation that affects the index.
 - **Design Choice**: We use LSI for timer execution queries (by executeAt) to minimize costs while using the primary key for CRUD operations (by timerId). The 10GB partition limit is managed through administrative controls - when a partition approaches the limit, system administrators can create new groups with higher shard counts to redistribute the load. For customers requiring unlimited partition storage, GSI support can be offered as a premium feature with higher DynamoDB costs.
 
+**Shards Table**:
+```json
+{
+  "TableName": "shards",
+  "KeySchema": [
+    {
+      "AttributeName": "shardId",
+      "KeyType": "HASH"
+    }
+  ],
+  "AttributeDefinitions": [
+    {
+      "AttributeName": "shardId",
+      "AttributeType": "N"
+    }
+  ]
+}
+```
+
+**Shards Item Structure**:
+```json
+{
+  "shardId": {"N": "286"},
+  "version": {"N": "42"},
+  "ownerId": {"S": "instance-uuid-1234"},
+  "claimedAt": {"S": "2024-12-19T10:00:00Z"},
+  "metadata": {"S": "{\"processId\":12345,\"serviceVersion\":\"1.0.0\"}"}
+}
+```
+
 ## Traditional SQL Databases
 
 While the distributed databases above provide native sharding and horizontal scaling, traditional SQL databases can also support the timer service with appropriate configuration and potentially external sharding mechanisms.
@@ -401,6 +477,16 @@ CREATE TABLE timers (
     PRIMARY KEY (shard_id, execute_at, timer_uuid),  -- Clustered by default in MySQL
     UNIQUE INDEX idx_timer_lookup (shard_id, timer_id)
 ) PARTITION BY HASH(shard_id) PARTITIONS 32;
+
+-- Shards table for ownership management
+CREATE TABLE shards (
+    shard_id INT NOT NULL,
+    version BIGINT NOT NULL,
+    owner_id VARCHAR(255),
+    claimed_at TIMESTAMP(3) NOT NULL,
+    metadata JSON,
+    PRIMARY KEY (shard_id)
+) PARTITION BY HASH(shard_id) PARTITIONS 8;  -- Fewer partitions as there are fewer shards
 ```
 
 
@@ -449,6 +535,16 @@ CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, timer_id);
 -- Cluster table by primary key for better physical ordering
 CLUSTER timers USING timers_pkey;
 
+-- Shards table for ownership management
+CREATE TABLE shards (
+    shard_id INTEGER NOT NULL,
+    version BIGINT NOT NULL,
+    owner_id VARCHAR(255),
+    claimed_at TIMESTAMP(3) NOT NULL DEFAULT NOW(),
+    metadata JSONB,
+    PRIMARY KEY (shard_id)
+) PARTITION BY HASH (shard_id);
+
 
 ```
 
@@ -493,7 +589,17 @@ PARTITION BY HASH (shard_id) PARTITIONS 32;
 -- Unique index for timer lookups
 CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, timer_id);
 
-
+-- Shards table for ownership management
+CREATE TABLE shards (
+    shard_id NUMBER(10) NOT NULL,
+    version NUMBER(19) NOT NULL,
+    owner_id VARCHAR2(255),
+    claimed_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+    metadata CLOB CHECK (metadata IS JSON),
+    PRIMARY KEY (shard_id)
+)
+ORGANIZATION INDEX                    -- Index Organized Table for clustering
+PARTITION BY HASH (shard_id) PARTITIONS 8;
 ```
 
 
@@ -554,7 +660,23 @@ AS PARTITION pf_shard_id TO ([PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
 -- Unique index for timer lookups  
 CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, timer_id);
 
+-- Shards table for ownership management
+CREATE TABLE shards (
+    shard_id INT NOT NULL,
+    version BIGINT NOT NULL,
+    owner_id NVARCHAR(255),
+    claimed_at DATETIME2(3) NOT NULL DEFAULT GETUTCDATE(),
+    metadata NVARCHAR(MAX) CHECK (ISJSON(metadata) = 1),
+    PRIMARY KEY CLUSTERED (shard_id)
+);
 
+-- Partition shards table using same scheme (fewer partitions for fewer shards)
+CREATE PARTITION FUNCTION pf_shards_id (INT)
+AS RANGE LEFT FOR VALUES (0, 1, 2, 3, 4, 5, 6, 7);
+
+CREATE PARTITION SCHEME ps_shards_id
+AS PARTITION pf_shards_id TO ([PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY], 
+                             [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY]);
 ```
 
 
@@ -573,48 +695,6 @@ SELECT * FROM timers
 WHERE shard_id = 286 AND timer_id = 'user-reminder-123';
 ```
 
-
-
-
-
-### Database-Specific Optimizations
-
-#### Cassandra
-- **Compaction Strategy**: Time Window Compaction for time-series data
-- **Consistency Level**: QUORUM for read/write balance
-- **Token Aware**: Use token-aware driver for direct shard access
-
-#### MongoDB
-- **Read Preference**: Primary preferred for consistency
-- **Write Concern**: Majority for durability
-- **Chunk Size**: Adjust for timer distribution patterns
-
-#### TiDB
-- **Placement Rules**: Pin frequently accessed shards to fast storage
-- **Follower Read**: Use follower reads for query scalability
-- **Auto Split**: Enable automatic region splitting
-
-#### DynamoDB
-- **Provisioned Capacity**: Set per-shard capacity limits
-- **Adaptive Capacity**: Enable for handling hot partitions
-- **DAX**: Use DynamoDB Accelerator for read-heavy workloads
-
-## Operational Considerations
-
-### Monitoring and Metrics
-- **Shard Balance**: Monitor timer distribution across shards
-- **Query Performance**: Track per-shard query latencies
-- **Hot Spot Detection**: Identify overloaded shards
-
-### Backup and Recovery
-- **Per-Shard Backup**: Leverage partitioning for parallel backups
-- **Point-in-Time Recovery**: Maintain consistent state across shards
-- **Cross-Region Replication**: Distribute shards across regions
-
-### Schema Migration
-- **Backward Compatibility**: Maintain existing partitioning scheme
-- **Rolling Updates**: Update schema without downtime
-- **Data Migration**: Move data between shards if rebalancing needed
 
 ---
 

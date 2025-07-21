@@ -15,7 +15,7 @@ type (
 		CreateTimer(
 			ctx context.Context,
 			shardId int, timer *genapi.Timer,
-		) (alreadyExists bool, err error)
+		) (err error)
 
 		GetTimersUpToTimestamp(
 			ctx context.Context,
