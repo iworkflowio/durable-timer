@@ -66,7 +66,7 @@ paths:
                     maxRetries: 3
                     backoffMultiplier: 2.0
                     initialInterval: "30s"
-                  callbackTimeout: "10s"
+                  callbackTimeoutSeconds: 10
       responses:
         '200':
           description: Timer created successfully
@@ -212,10 +212,9 @@ components:
             action: "send_reminder"
         retryPolicy:
           $ref: '#/components/schemas/RetryPolicy'
-        callbackTimeout:
-          type: string
-          description: Timeout for the HTTP callback (e.g., "30s", "5m")
-          example: "10s"
+        callbackTimeoutSeconds:
+          type: integer
+          description: Timeout for the HTTP callback in seconds
 
     CallbackResponse:      
       type: object
@@ -250,10 +249,10 @@ components:
           description: New payload data
         retryPolicy:
           $ref: '#/components/schemas/RetryPolicy'
-        callbackTimeout:
-          type: string
-          description: New timeout for the HTTP callback
-          example: "15s"
+        callbackTimeoutSeconds:
+          type: integer
+          description: New timeout for the HTTP callback in seconds
+          example: 15
 
     Timer:
       type: object
@@ -291,10 +290,10 @@ components:
             action: "send_reminder"
         retryPolicy:
           $ref: '#/components/schemas/RetryPolicy'
-        callbackTimeout:
-          type: string
-          description: Timeout for the HTTP callback
-          example: "30s"
+        callbackTimeoutSeconds:
+          type: integer
+          description: Timeout for the HTTP callback in seconds
+          example: 30
         createdAt:
           type: string
           format: date-time

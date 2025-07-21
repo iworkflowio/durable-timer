@@ -32,6 +32,6 @@ type CreateTimerRequest struct {
 
 	RetryPolicy RetryPolicy `json:"retryPolicy,omitempty"`
 
-	// Timeout for the HTTP callback (e.g., \"30s\", \"5m\")
-	CallbackTimeout string `json:"callbackTimeout,omitempty"`
+	// Timeout for the HTTP callback in seconds
+	CallbackTimeoutSeconds int32 `json:"callbackTimeoutSeconds,omitempty"`
 }

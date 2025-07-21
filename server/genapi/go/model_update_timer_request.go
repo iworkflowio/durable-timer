@@ -26,6 +26,6 @@ type UpdateTimerRequest struct {
 
 	RetryPolicy RetryPolicy `json:"retryPolicy,omitempty"`
 
-	// New timeout for the HTTP callback
-	CallbackTimeout string `json:"callbackTimeout,omitempty"`
+	// New timeout for the HTTP callback in seconds
+	CallbackTimeoutSeconds int32 `json:"callbackTimeoutSeconds,omitempty"`
 }

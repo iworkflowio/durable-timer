@@ -120,7 +120,7 @@ CREATE TABLE timers (
     callback_url    VARCHAR(2048) NOT NULL, -- HTTP callback URL
     payload         JSON,                   -- Custom payload data
     retry_policy    JSON,                   -- Retry configuration
-    callback_timeout VARCHAR(32),           -- Timeout duration
+    callback_timeout_seconds INT,           -- Timeout duration in seconds
     created_at      TIMESTAMP NOT NULL,     -- Creation timestamp
     updated_at      TIMESTAMP NOT NULL,     -- Last update timestamp
     
@@ -159,7 +159,7 @@ CREATE TABLE timers (
     callback_url text,
     payload text,            -- JSON serialized
     retry_policy text,       -- JSON serialized
-    callback_timeout text,
+    callback_timeout_seconds int,
     created_at timestamp,
     updated_at timestamp,
     PRIMARY KEY (shard_id, execute_at, timer_uuid)
@@ -218,7 +218,7 @@ WHERE shard_id = ? AND timer_id = ?;
     maxRetries: 3,
     initialInterval: "30s"
   },
-  callbackTimeout: "30s",
+  callbackTimeoutSeconds: 30,
   createdAt: ISODate("2024-12-19T10:00:00Z"),
   updatedAt: ISODate("2024-12-19T10:00:00Z")
 }
@@ -289,7 +289,7 @@ CREATE TABLE timers (
     callback_url VARCHAR(2048) NOT NULL,
     payload JSON,
     retry_policy JSON,
-    callback_timeout VARCHAR(32) DEFAULT '30s',
+    callback_timeout_seconds INT DEFAULT 30,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (shard_id, execute_at, timer_uuid) CLUSTERED,  -- Explicit clustering
@@ -383,7 +383,7 @@ WHERE shard_id = ? AND timer_id = ?;
   "callbackUrl": {"S": "https://api.example.com/webhook"},
   "payload": {"S": "{\"userId\":\"user123\"}"},
   "retryPolicy": {"S": "{\"maxRetries\":3}"},
-  "callbackTimeout": {"S": "30s"},
+  "callbackTimeoutSeconds": {"N": "30"},
   "createdAt": {"S": "2024-12-19T10:00:00Z"},
   "updatedAt": {"S": "2024-12-19T10:00:00Z"}
 }
@@ -471,7 +471,7 @@ CREATE TABLE timers (
     callback_url VARCHAR(2048) NOT NULL,
     payload JSON,
     retry_policy JSON,
-    callback_timeout VARCHAR(32) DEFAULT '30s',
+    callback_timeout_seconds INT DEFAULT 30,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (shard_id, execute_at, timer_uuid),  -- Clustered by default in MySQL
@@ -519,7 +519,7 @@ CREATE TABLE timers (
     callback_url VARCHAR(2048) NOT NULL,
     payload JSONB,
     retry_policy JSONB,
-    callback_timeout VARCHAR(32) DEFAULT '30s',
+    callback_timeout_seconds INTEGER DEFAULT 30,
     created_at TIMESTAMP(3) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP(3) NOT NULL DEFAULT NOW(),
     PRIMARY KEY (shard_id, execute_at, timer_uuid)
