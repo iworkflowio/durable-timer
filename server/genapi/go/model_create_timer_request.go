@@ -18,7 +18,7 @@ type CreateTimerRequest struct {
 	// Unique identifier for the timer (used for deduplication)
 	Id string `json:"id"`
 
-	// Group identifier for the timer. It is used for scalability. Must be one of the groupIds enabled in the system. Must be provided in read/write operation requests for lookup.
+	// Group identifier for the timer. It is used for scalability. Must be one of the groupIds enabled in the system. Must be provided in read/write operation requests for lookup. If not provided, the timer will be created in the default group configured in the system.
 	GroupId string `json:"groupId,omitempty"`
 
 	// ISO 8601 timestamp when the timer should execute
