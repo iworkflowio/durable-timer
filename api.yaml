@@ -76,8 +76,6 @@ paths:
                 $ref: '#/components/schemas/Timer'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '409':
-          $ref: '#/components/responses/AlreadyExists'
         '500':
           $ref: '#/components/responses/InternalServerError'
 
@@ -176,7 +174,6 @@ components:
       description: Group identifier for the timer. It is used for scalability. Must be one of the groupIds enabled in the system. Must be provided in read/write operation requests for lookup.
       schema:
         type: string
-        default: "default"
         example: "xlarge-scale-group"
 
   schemas:
@@ -218,7 +215,6 @@ components:
         callbackTimeout:
           type: string
           description: Timeout for the HTTP callback (e.g., "30s", "5m")
-          default: "30s"
           example: "10s"
 
     CallbackResponse:      
@@ -318,33 +314,24 @@ components:
     RetryPolicy:
       type: object
       properties:
-        maxRetries:
+        maxAttempts:
           type: integer
-          minimum: 0
-          maximum: 10
-          default: 3
-          description: Maximum number of retry attempts
+          description: Maximum number of attempts including retries
           example: 3
-        maxRetryAttemptsDuration:
+        maxAttemptsDuration:
           type: string
-          default: "24h"
-          description: the total duration of retry attempts
+          description: the total duration of all attempts including retries
           example: "1h"
         initialInterval:
           type: string
-          default: "30s"
           description: Initial retry interval (e.g., "30s", "1m")
           example: "30s"
         backoffMultiplier:
           type: number
-          minimum: 1.0
-          maximum: 10.0
-          default: 2.0
           description: Multiplier for exponential backoff
           example: 2.0
         maxInterval:
-          type: string
-          default: "10m"
+          type: string"
           description: Maximum retry interval
           example: "5m"
 
@@ -382,21 +369,6 @@ components:
             error: "INVALID_INPUT"
             message: "executeAt must be a future timestamp"
             timestamp: "2024-12-19T10:15:30Z"
-
-    AlreadyExists:
-      description: Timer already exists
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Timer'
-          example:
-            id: "user-notification-123"
-            executeAt: "2024-12-20T15:30:00Z"
-            callbackUrl: "https://api.example.com/webhooks/timer"
-            payload:
-              userId: "user123"
-              action: "send_reminder"
-              message: "Don't forget about your meeting!"
 
     NotFound:
       description: Timer not found

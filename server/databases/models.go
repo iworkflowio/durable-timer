@@ -7,7 +7,6 @@ import (
 
 type (
 	RangeGetTimersRequest struct {
-		GroupId       int
 		UpToTimestamp time.Time
 		Limit         int
 	}
@@ -17,7 +16,6 @@ type (
 	}
 
 	RangeDeleteTimersRequest struct {
-		GroupId int
 		// Delete timers from this timestamp
 		// This is necessary because of racing conditions.
 		// There could be another instance of the service "owning" the shard and performing the execution/deletion.

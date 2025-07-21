@@ -11,11 +11,11 @@ package genapi
 
 type RetryPolicy struct {
 
-	// Maximum number of retry attempts
-	MaxRetries int32 `json:"maxRetries,omitempty"`
+	// Maximum number of attempts including retries
+	MaxAttempts int32 `json:"maxAttempts,omitempty"`
 
-	// the total duration of retry attempts
-	MaxRetryAttemptsDuration string `json:"maxRetryAttemptsDuration,omitempty"`
+	// the total duration of all attempts including retries
+	MaxAttemptsDuration string `json:"maxAttemptsDuration,omitempty"`
 
 	// Initial retry interval (e.g., \"30s\", \"1m\")
 	InitialInterval string `json:"initialInterval,omitempty"`
@@ -24,5 +24,5 @@ type RetryPolicy struct {
 	BackoffMultiplier float32 `json:"backoffMultiplier,omitempty"`
 
 	// Maximum retry interval
-	MaxInterval string `json:"maxInterval,omitempty"`
+	MaxInterval ModelString `json:"maxInterval,omitempty"`
 }
