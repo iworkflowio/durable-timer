@@ -23,14 +23,10 @@ This directory contains the main timer service server that handles:
 
 ```
 server/
-├── cmd/                    # Main applications and entry points
-├── internal/               # Private application code
-│   ├── api/               # HTTP handlers and routing
-│   ├── config/            # Configuration management
-│   ├── databases/         # Database adapters (8 databases supported)
-│   ├── engine/            # Timer execution engine and core logic
-│   └── models/            # Data structures and domain models
-├── pkg/                   # Public library code for external use
+├── cmd/                   # Main applications and entry points
+├── config/                # Configuration management
+├── databases/             # Database adapters (8 databases supported)
+├── engine/                # Timer execution engine and core logic
 ├── integTests/            # Integration tests
 ├── go.mod                 # Go module definition
 ├── go.sum                 # Go module checksums
