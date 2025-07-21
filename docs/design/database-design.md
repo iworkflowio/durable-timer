@@ -61,6 +61,26 @@ Groups support different scale requirements:
 - **Isolation**: Workloads don't interfere with each other
 - **Scaling**: Can adjust shard count per group as needed
 
+#### Group-Based Partitioning Trade-offs
+
+**Cons: API Complexity**
+- **Exposed Abstraction**: Users must understand and provide `groupId` for timer operations
+- **API Surface**: Get, update, and delete operations require both `groupId` and `timerId` parameters
+- **Learning Curve**: Additional concept for users to understand beyond simple timer IDs
+
+**Pros: Operational Simplicity**  
+- **No Complex Resharding**: Avoids building sophisticated data migration mechanisms when changing `numShards` configuration
+- **Predictable Performance**: Shard assignment is deterministic and doesn't require cluster-wide coordination
+- **Simpler Implementation**: No need for complex resharding algorithms, data movement, or consistency guarantees during resharding operations
+
+**Impact Assessment**
+- **Limited API Impact**: Only 3 of 4 API endpoints require `groupId` (create timer uses it implicitly for shard assignment)
+- **Better Than Alternatives**: Exposing `groupId` is preferable to exposing raw `shardId` or requiring complex client-side shard computation
+- **Operational Benefits**: The operational simplicity of avoiding resharding outweighs the minor API complexity increase
+- **Future Flexibility**: Groups can be pre-allocated with appropriate shard counts based on expected load, reducing the need for runtime resharding
+
+**Conclusion**: The design trades minor API complexity for significant operational simplicity. Users learn one additional concept (`groupId`) but gain predictable performance and avoid the complexity and risks associated with online resharding operations. This follows established patterns in distributed systems where exposing partitioning concepts to users is a proven approach for achieving scale.
+
 ## Table Schema Design
 
 ### General Idea For All Databases
@@ -84,7 +104,7 @@ CREATE TABLE timers (
     created_at      TIMESTAMP NOT NULL,     -- Creation timestamp
     updated_at      TIMESTAMP NOT NULL,     -- Last update timestamp
     
-    PRIMARY KEY   (shard_id, execute_at, timer_uuid) and CLUSTERING
+    PRIMARY KEY (shard_id, execute_at, timer_uuid)  -- Must provide physical clustering
 ) PARTITION BY HASH(shard_id);
 
 -- Unique index for timer_id lookups and CRUD operations
@@ -114,102 +134,12 @@ CREATE UNIQUE INDEX idx_timer_id ON timers (shard_id, timer_id);
 | `created_at` | TIMESTAMP | Creation time | Audit trail |
 | `updated_at` | TIMESTAMP | Last modification | Optimistic locking |
 
-## Design Trade-offs
 
-### Group-Based Partitioning Trade-offs
 
-**Cons: API Complexity**
-- **Exposed Abstraction**: Users must understand and provide `groupId` for timer operations
-- **API Surface**: Get, update, and delete operations require both `groupId` and `timerId` parameters
-- **Learning Curve**: Additional concept for users to understand beyond simple timer IDs
 
-**Pros: Operational Simplicity**  
-- **No Complex Resharding**: Avoids building sophisticated data migration mechanisms when changing `numShards` configuration
-- **Predictable Performance**: Shard assignment is deterministic and doesn't require cluster-wide coordination
-- **Simpler Implementation**: No need for complex resharding algorithms, data movement, or consistency guarantees during resharding operations
 
-**Impact Assessment**
-- **Limited API Impact**: Only 3 of 4 API endpoints require `groupId` (create timer uses it implicitly for shard assignment)
-- **Better Than Alternatives**: Exposing `groupId` is preferable to exposing raw `shardId` or requiring complex client-side shard computation
-- **Operational Benefits**: The operational simplicity of avoiding resharding outweighs the minor API complexity increase
-- **Future Flexibility**: Groups can be pre-allocated with appropriate shard counts based on expected load, reducing the need for runtime resharding
 
-**Similarity to NoSQL Database Patterns**
-This trade-off mirrors common patterns in distributed NoSQL databases:
-- **Cassandra**: Exposes partition keys to users for predictable performance and data locality
-- **DynamoDB**: Requires users to design partition keys and understand hot partitions for optimal scaling
-- **MongoDB Sharding**: Users must choose shard keys and understand their impact on query routing
-- **HBase**: Row key design directly affects data distribution and query performance
 
-Like these systems, we expose partitioning concepts (`groupId`) to users in exchange for:
-- Predictable, scalable performance
-- Elimination of complex auto-resharding mechanisms
-- Simplified operational model
-- Direct user control over data distribution
-
-**Conclusion**: The design trades minor API complexity for significant operational simplicity. Users learn one additional concept (`groupId`) but gain predictable performance and avoid the complexity and risks associated with online resharding operations. This follows established patterns in distributed systems where exposing partitioning concepts to users is a proven approach for achieving scale.
-
-## Index Strategy: Local vs Global
-
-### Why Local Indexes Are Sufficient
-
-**No Cross-Shard Queries Needed**:
-- All CRUD operations know both `groupId` and `timerId`, allowing direct shard targeting
-- Timer execution processes each shard independently in parallel
-- No use cases require querying across all shards simultaneously
-
-**Query Patterns**:
-```sql
--- All queries are shard-specific:
-WHERE shard_id = ? AND timer_id = ?           -- Direct lookup
-WHERE shard_id = ? AND execute_at <= ?        -- Time-based execution query
-```
-
-**Performance Benefits**:
-- **O(1) Operations**: Direct shard targeting eliminates scatter-gather queries
-- **Parallel Processing**: Independent shard processing scales linearly
-- **Lower Latency**: Single-shard operations avoid cross-shard coordination
-- **Simplified Consistency**: No cross-shard consistency concerns
-
-**Database Implementation Notes**:
-- **Cassandra, TiDB**: Native local indexes within partitions
-- **MongoDB**: Compound indexes that include shardId effectively create local behavior
-- **DynamoDB**: LSI with shardId partition key provides cost-effective local indexes (10GB limit managed via shard allocation)
-
-## Primary Key Size Optimization
-
-### Database-Specific Primary Key Strategies
-
-**Databases Supporting Non-Unique Primary Keys** (can optimize for smaller primary keys):
-- **MongoDB**: Can use non-unique compound indexes with separate unique constraints
-- **Some NoSQL databases**: May support similar patterns
-
-**Databases Requiring Unique Primary Keys** (must include timer_id for uniqueness):
-- **Cassandra**: PRIMARY KEY must be unique
-- **TiDB/MySQL**: PRIMARY KEY must be unique  
-- **DynamoDB**: Primary key combination must be unique
-
-### Optimization Strategy
-
-For databases supporting non-unique primary keys:
-```
-Primary Index:    (shard_id, execute_at)           -- Smaller, optimized for queries
-Unique Index:     (shard_id, timer_id) UNIQUE      -- Separate uniqueness constraint
-```
-
-For databases requiring unique primary keys:
-```
-Primary Key:      (shard_id, execute_at, timer_id) -- Must include timer_id for uniqueness
-Secondary Index:  (shard_id, timer_id)             -- For CRUD operations
-```
-
-### Benefits of Smaller Primary Keys
-
-✅ **Reduced Index Size**: Smaller keys = smaller indexes = better memory usage  
-✅ **Faster Queries**: Less data to scan and compare  
-✅ **Lower Storage Overhead**: Primary key often included in secondary indexes  
-✅ **Better Cache Performance**: More index entries fit in memory  
-✅ **Reduced Network Transfer**: Smaller keys transferred during operations  
 
 ## Database-Specific Implementations
 
@@ -289,13 +219,12 @@ sh.enableSharding("timerservice")
 // Shard collection on shardId
 sh.shardCollection("timerservice.timers", {shardId: 1})
 
-// Primary compound index for timer execution queries
+// Primary compound index for timer execution queries (provides physical ordering)
 db.timers.createIndex({shardId: 1, executeAt: 1, timerUuid: 1})
 
 // Unique index for timer_id CRUD operations  
 db.timers.createIndex({shardId: 1, timerId: 1}, {unique: true})
 ```
-
 
 
 **Query Patterns**:
@@ -331,7 +260,7 @@ CREATE TABLE timers (
     callback_timeout VARCHAR(32) DEFAULT '30s',
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-    PRIMARY KEY (shard_id, execute_at, timer_uuid),
+    PRIMARY KEY (shard_id, execute_at, timer_uuid) CLUSTERED,  -- Explicit clustering
     UNIQUE KEY idx_timer_id (shard_id, timer_id)  -- Unique index for CRUD operations
 ) PARTITION BY HASH(shard_id) PARTITIONS 1024;
 ```
@@ -419,14 +348,7 @@ WHERE shard_id = ? AND timer_id = ?;
 }
 ```
 
-**Key Features**:
-- **Consistent Design**: Same logical primary key pattern as all databases
-- **Managed Service**: Fully managed, serverless scaling
-- **Composite Range Key**: `executeAt#timerUuid` for uniqueness and ordering
-- **LSI for CRUD**: Local Secondary Index on timerId for timer CRUD operations
-- **Consistent Hashing**: Built-in data distribution
 
-**Note on Uniqueness**: Since multiple timers can have the same executeAt, we include timerId in the item structure to maintain uniqueness. DynamoDB will handle items with identical primary keys by overwriting, so application logic must ensure executeAt + timerId combinations are unique.
 
 **Query Patterns**:
 ```javascript
@@ -481,7 +403,7 @@ CREATE TABLE timers (
     callback_timeout VARCHAR(32) DEFAULT '30s',
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-    PRIMARY KEY (shard_id, execute_at, timer_uuid),
+    PRIMARY KEY (shard_id, execute_at, timer_uuid),  -- Clustered by default in MySQL
     UNIQUE INDEX idx_timer_lookup (shard_id, timer_id)
 ) PARTITION BY HASH(shard_id) PARTITIONS 32;
 ```
@@ -529,6 +451,9 @@ CREATE TABLE timers (
 -- Unique index for timer lookups
 CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, timer_id);
 
+-- Cluster table by primary key for better physical ordering
+CLUSTER timers USING timers_pkey;
+
 
 ```
 
@@ -567,6 +492,7 @@ CREATE TABLE timers (
     updated_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (shard_id, execute_at, timer_uuid)
 ) 
+ORGANIZATION INDEX                    -- Index Organized Table for clustering
 PARTITION BY HASH (shard_id) PARTITIONS 32;
 
 -- Unique index for timer lookups
@@ -608,7 +534,7 @@ CREATE TABLE timers (
     callback_timeout NVARCHAR(32) DEFAULT '30s',
     created_at DATETIME2(3) NOT NULL DEFAULT GETUTCDATE(),
     updated_at DATETIME2(3) NOT NULL DEFAULT GETUTCDATE(),
-    PRIMARY KEY (shard_id, execute_at, timer_uuid)
+    PRIMARY KEY CLUSTERED (shard_id, execute_at, timer_uuid)  -- Explicit clustering
 );
 
 -- Partition function and scheme (requires SQL Server Enterprise)
