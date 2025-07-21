@@ -16,9 +16,9 @@ CREATE TABLE IF NOT EXISTS timers (
     callback_timeout text,
     created_at timestamp,
     updated_at timestamp,
-    PRIMARY KEY (shard_id, execute_at, timer_uuid)
-) WITH CLUSTERING ORDER BY (execute_at ASC, timer_uuid ASC);
+    PRIMARY KEY ( (shard_id), execute_at, timer_uuid)
+) WITH CLUSTERING ORDER BY (execute_at ASC);
 
 -- Unique index for timer_id lookups and CRUD operations
 -- Note that Cassandra doesn't support unique constraints, it's has to be done via implementation. 
-CREATE INDEX IF NOT EXISTS idx_timer_id ON timers (shard_id, timer_id);
+CREATE INDEX IF NOT EXISTS idx_timer_id ON timers (timer_id);

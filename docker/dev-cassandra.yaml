@@ -37,6 +37,7 @@ services:
         condition: service_healthy
     volumes:
       - ./scripts/cassandra-init.cql:/init.cql:ro
+      - ../server/databases/cassandra/schema/v1.cql:/v1-schema.cql:ro
     networks:
       - timer-network
     entrypoint: |
@@ -48,6 +49,7 @@ services:
         done
         echo 'Cassandra is ready, executing initialization script...'
         cqlsh cassandra -f /init.cql
+        cqlsh cassandra -k timer_service -f /v1-schema.cql
         echo 'Cassandra initialization completed!'
       "
     restart: "no"
