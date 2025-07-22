@@ -115,10 +115,6 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	if !applied {
 		// Version changed concurrently, return conflict info
 		conflictInfo := &databases.ShardInfo{
-			ShardId:      int64(previous["shard_id"].(int)),
-			OwnerId:      previous["owner_id"].(string),
-			ClaimedAt:    previous["claimed_at"].(time.Time),
-			Metadata:     previous["metadata"],
 			ShardVersion: previous["version"].(int64),
 		}
 		return 0, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)

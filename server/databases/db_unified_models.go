@@ -17,7 +17,7 @@ type (
 		OriginalError      error
 		CustomMessage      string
 		ShardConditionFail bool
-		ClaimedShardInfo   *ShardInfo
+		ConflictShardInfo  *ShardInfo
 		NotExists          bool
 	}
 
@@ -103,6 +103,6 @@ func NewDbErrorOnShardConditionFail(msg string, err error, shardInfo *ShardInfo)
 		OriginalError:      err,
 		CustomMessage:      msg,
 		ShardConditionFail: true,
-		ClaimedShardInfo:   shardInfo,
+		ConflictShardInfo:  shardInfo,
 	}
 }

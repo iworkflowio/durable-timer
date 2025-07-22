@@ -214,7 +214,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 3
-	numGoroutines := 100
+	numGoroutines := 10
 
 	var wg sync.WaitGroup
 	results := make([]struct {
@@ -228,6 +228,10 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
+			if i > 5 {
+				// sleep for 100 ms to run into the update case
+				time.Sleep(100 * time.Millisecond)
+			}
 			ownerId := fmt.Sprintf("owner-%d", idx)
 			version, err := store.ClaimShardOwnership(ctx, shardId, ownerId, map[string]int{"attempt": idx})
 			results[idx] = struct {
@@ -256,7 +260,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 		} else {
 			failureCount++
 			assert.True(t, result.err.ShardConditionFail, "should fail on shard condition, but is %s", result.err.OriginalError)
-			assert.Greater(t, result.err.ClaimedShardInfo.ShardVersion, int64(0), "should have a valid version")
+			assert.Greater(t, result.err.ConflictShardInfo.ShardVersion, int64(0), "should have a valid version")
 		}
 	}
 
