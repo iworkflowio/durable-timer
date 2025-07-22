@@ -115,6 +115,7 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 
 	if !applied {
 		// Version changed concurrently, return conflict info
+		// only version is available
 		conflictInfo := &databases.ShardInfo{
 			ShardVersion: previous["shard_version"].(int64),
 		}

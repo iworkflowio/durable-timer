@@ -23,11 +23,11 @@ type (
 	}
 
 	DbError struct {
-		OriginalError      error
-		CustomMessage      string
-		ShardConditionFail bool
-		ConflictShardInfo  *ShardInfo
-		NotExists          bool
+		OriginalError        error
+		CustomMessage        string
+		ShardConditionFail   bool
+		ConflictShardVersion int64
+		NotExists            bool
 	}
 
 	// DbTimer is the timer model stored in DB
@@ -109,9 +109,9 @@ func NewGenericDbError(msg string, err error) *DbError {
 
 func NewDbErrorOnShardConditionFail(msg string, err error, shardInfo *ShardInfo) *DbError {
 	return &DbError{
-		OriginalError:      err,
-		CustomMessage:      msg,
-		ShardConditionFail: true,
-		ConflictShardInfo:  shardInfo,
+		OriginalError:        err,
+		CustomMessage:        msg,
+		ShardConditionFail:   true,
+		ConflictShardVersion: shardInfo.ShardVersion,
 	}
 }

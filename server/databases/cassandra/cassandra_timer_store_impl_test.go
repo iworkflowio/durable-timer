@@ -137,7 +137,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 		} else {
 			failureCount++
 			assert.True(t, result.err.ShardConditionFail, "should fail on shard condition, but is %s", result.err.OriginalError)
-			assert.Greater(t, result.err.ConflictShardInfo.ShardVersion, int64(0), "should have a valid version")
+			assert.Greater(t, result.err.ConflictShardVersion, int64(0), "should have a valid version")
 		}
 	}
 
