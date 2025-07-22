@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8
+    container_name: timer-service-mysql-dev
+    environment:
+      MYSQL_ROOT_PASSWORD: timer_root_password
+      MYSQL_DATABASE: timer_service
+      MYSQL_USER: timer_user
+      MYSQL_PASSWORD: timer_password
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "timer_user", "-ptimer_password"]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+      start_period: 30s
+
+  mysql-init:
+    image: mysql:8.0
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ../server/databases/mysql/schema:/schema
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for MySQL to be ready...' &&
+        until mysqladmin ping -h mysql -u timer_user -ptimer_password --silent; do
+          echo 'MySQL not ready, waiting...'
+          sleep 2
+        done &&
+        echo 'Executing schema...' &&
+        mysql -h mysql -u timer_user -ptimer_password timer_service < /schema/v1.sql &&
+        echo 'Schema execution completed successfully!'
+      "
+
+volumes:
+  mysql_data: 

@@ -1,0 +1,20 @@
+CREATE TABLE timers (
+    shard_id INT NOT NULL,
+    row_type SMALLINT NOT NULL,
+    timer_execute_at TIMESTAMP(3) NOT NULL,
+    timer_uuid CHAR(36) NOT NULL,
+    timer_id VARCHAR(255),
+    timer_group_id VARCHAR(255),
+    timer_callback_url VARCHAR(2048),
+    timer_payload JSON,
+    timer_retry_policy JSON,
+    timer_callback_timeout_seconds INT DEFAULT 30,
+    shard_version BIGINT,
+    shard_owner_id VARCHAR(255),
+    shard_claimed_at TIMESTAMP(3),
+    shard_metadata JSON,
+    timer_created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    timer_attempts INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid),
+    UNIQUE INDEX idx_timer_lookup (shard_id, row_type, timer_id)
+); 

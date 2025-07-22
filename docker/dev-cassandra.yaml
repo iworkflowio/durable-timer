@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # Cassandra Database
   cassandra:
-    image: cassandra:4.1
+    image: cassandra:5
     container_name: timer-cassandra
     hostname: cassandra
     environment:

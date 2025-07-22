@@ -9,9 +9,11 @@ const RowTypeShard = int16(1) // 1 = shard record
 const RowTypeTimer = int16(2) // 2 = timer record
 
 // ZeroTimestamp and ZeroUUID are for timer fields since they're part of primary key but not used for shard records
-// 1969-12-31 16:00:00 -0800 PST and 00000000-0000-0000-0000-000000000000
-var ZeroTimestamp = time.Unix(0, 0) // Unix epoch
-var ZeroUUID = gocql.UUID{}         // Zero UUID
+// 1970-01-01 00:00:01 UTC (minimum valid MySQL TIMESTAMP)
+// 00000000-0000-0000-0000-000000000000
+var ZeroTimestamp = time.Unix(1, 0)
+var ZeroUUID = gocql.UUID{}
+var ZeroUUIDString = ZeroUUID.String()
 
 type (
 	ShardInfo struct {
@@ -99,6 +101,12 @@ type (
 		CallbackTimeoutSeconds int32 `json:"callbackTimeoutSeconds,omitempty"`
 	}
 )
+
+func (d DbError) Error() string {
+	return d.CustomMessage + "\n" + d.OriginalError.Error()
+}
+
+var _ error = (*DbError)(nil)
 
 func NewGenericDbError(msg string, err error) *DbError {
 	return &DbError{
