@@ -1,8 +1,12 @@
 package cassandra
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +26,61 @@ func getTestHost() string {
 		return host
 	}
 	return testHost
+}
+
+// getSchemaFilePath returns the path to the v1.cql schema file
+func getSchemaFilePath() string {
+	// Get current file directory
+	_, currentFile, _, _ := runtime.Caller(0)
+	currentDir := filepath.Dir(currentFile)
+
+	// Path to schema file relative to current file
+	schemaPath := filepath.Join(currentDir, "schema", "v1.cql")
+	return schemaPath
+}
+
+// executeSchemaFile reads and executes CQL statements from the schema file
+func executeSchemaFile(session *gocql.Session) error {
+	schemaPath := getSchemaFilePath()
+
+	file, err := os.Open(schemaPath)
+	if err != nil {
+		return fmt.Errorf("failed to open schema file %s: %w", schemaPath, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	var statement strings.Builder
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "--") {
+			continue
+		}
+
+		statement.WriteString(line)
+		statement.WriteString(" ")
+
+		// Execute statement when we hit a semicolon
+		if strings.HasSuffix(line, ";") {
+			cqlStatement := strings.TrimSpace(statement.String())
+			if cqlStatement != "" {
+				err := session.Query(cqlStatement).Exec()
+				if err != nil {
+					return fmt.Errorf("failed to execute CQL statement '%s': %w", cqlStatement, err)
+				}
+			}
+			statement.Reset()
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading schema file: %w", err)
+	}
+
+	return nil
 }
 
 // setupTestStore creates a test store with a clean test keyspace
@@ -101,20 +160,10 @@ func createTestKeyspace() error {
 	}
 	defer testSession.Close()
 
-	// Create shards table
-	createShardsTable := `
-		CREATE TABLE shards (
-			shard_id int,
-			version bigint,
-			owner_id text,
-			claimed_at timestamp,
-			metadata text,
-			PRIMARY KEY (shard_id)
-		)`
-
-	err = testSession.Query(createShardsTable).Exec()
+	// Execute schema from v1.cql file
+	err = executeSchemaFile(testSession)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to execute schema file: %w", err)
 	}
 
 	return nil

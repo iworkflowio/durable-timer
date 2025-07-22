@@ -142,6 +142,20 @@ Each decision should include:
 - **Alternatives**: Leader election with external coordination service, timestamp-based ownership claims, advisory locking, accept eventual consistency risks
 - **Impact**: Adds second table to schema but provides strong ownership guarantees. Prevents timer execution race conditions. Enables safe distributed processing with minimal coordination overhead. Memory version caching provides excellent performance characteristics.
 
+### [Date: 2025-07-22] Unified Table Design - Merging Timers and Shards Tables
+- **Context**: Previously designed separate `timers` and `shards` tables for timer storage and shard ownership management. T
+- **Decision**: Merge the `timers` and `shards` tables into a single unified `timers` table using a `row_type` field as discriminator (1=shard record, 2=timer record). Use conditional fields where timer-specific fields are only populated for timer records (row_type=2) and shard-specific fields only for shard records (row_type=1).
+- **Rationale**: Single table design optimizes transaction performance and data locality since shard management and timer operations can happen within the same partition. Atomic operations become simpler with single-table transactions. Related shard and timer data is stored together for better data locality, improving cache efficiency and reducing cross-table joins.
+- **Alternatives**: Keep separate tables with foreign key relationships, use separate databases for timers vs shards, accept multi-table transaction complexity, use database-specific solutions
+- **Impact**: Better performance for operations involving both shard and timer data. Simplified transaction logic with single-table operations. However, increases schema complexity due to conditional field usage and mixed record types in same table. Requires row_type-aware queries and conditional field handling in application code. Makes schema evolution more complex as changes affect multiple logical entity types.
+
+### [Date: 2025-07-22] Timer Field Naming Convention and Retry Logic Support
+- **Context**: Need consistent field naming in unified table design to distinguish between timer-specific and shard-specific fields. Also need to track retry attempts for timer scheduling logic instead of generic update timestamps.
+- **Decision**: Add "timer_" prefix to all timer-specific fields (timer_id, timer_group_id, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_execute_at, timer_uuid). Change created_at to timer_created_at and updated_at to timer_attempts (integer) for retry scheduling logic.
+- **Rationale**: Consistent naming convention clarifies field ownership in unified table design, reduces implementation confusion when handling row_type-specific fields. timer_attempts provides direct retry count tracking needed for retry scheduling logic instead of timestamp-based updated_at. Fields starting with "timer_" are for timer rows, fields starting with "shard_" are for shard rows (except shard_id which is the partition key).
+- **Alternatives**: Keep generic field names with conditional usage, use separate timer_attempt_count field alongside updated_at, database-specific naming conventions
+- **Impact**: Clearer code implementation with explicit field ownership, simplified retry logic implementation using integer attempt counter, consistent schema across all databases, requires updating existing implementations to use new field names
+
 ---
 
 *This log should be updated whenever significant decisions are made during the project development.* 

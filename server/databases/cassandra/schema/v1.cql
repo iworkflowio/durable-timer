@@ -3,18 +3,18 @@
 -- Here assumes the keyspace has been created
 
 -- Shards table for ownership management
-CREATE TABLE shards (
-    shard_id int,
+CREATE Type shard (
     version bigint,
     owner_id text,
     claimed_at timestamp,
     metadata text,  -- JSON serialized
-    PRIMARY KEY (shard_id)
 );
 
 -- Create timers table with optimized primary key design
 CREATE TABLE IF NOT EXISTS timers (
     shard_id int,
+    type     int,            -- enum RowType { Shard, Timer}
+    shard    frozen<shard>,
     execute_at timestamp,
     timer_uuid uuid,
     timer_id text,
