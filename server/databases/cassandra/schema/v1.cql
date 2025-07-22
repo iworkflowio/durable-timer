@@ -1,7 +1,3 @@
--- Timer Service Cassandra Schema v1
--- Initial schema for the distributed durable timer service
--- Here assumes the keyspace has been created
-
 CREATE TABLE timers (
     shard_id int,
     row_type smallint,           -- 1=shard, 2=timer

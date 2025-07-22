@@ -1,12 +1,11 @@
 package cassandra
 
 import (
-	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -28,7 +27,6 @@ func getTestHost() string {
 	return testHost
 }
 
-// getSchemaFilePath returns the path to the v1.cql schema file
 func getSchemaFilePath() string {
 	// Get current file directory
 	_, currentFile, _, _ := runtime.Caller(0)
@@ -41,43 +39,15 @@ func getSchemaFilePath() string {
 
 // executeSchemaFile reads and executes CQL statements from the schema file
 func executeSchemaFile(session *gocql.Session) error {
-	schemaPath := getSchemaFilePath()
 
-	file, err := os.Open(schemaPath)
+	contentBytes, err := os.ReadFile(getSchemaFilePath())
 	if err != nil {
-		return fmt.Errorf("failed to open schema file %s: %w", schemaPath, err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	var statement strings.Builder
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-
-		// Skip empty lines and comments
-		if line == "" || strings.HasPrefix(line, "--") {
-			continue
-		}
-
-		statement.WriteString(line)
-		statement.WriteString(" ")
-
-		// Execute statement when we hit a semicolon
-		if strings.HasSuffix(line, ";") {
-			cqlStatement := strings.TrimSpace(statement.String())
-			if cqlStatement != "" {
-				err := session.Query(cqlStatement).Exec()
-				if err != nil {
-					return fmt.Errorf("failed to execute CQL statement '%s': %w", cqlStatement, err)
-				}
-			}
-			statement.Reset()
-		}
+		log.Fatalf("Error reading file: %v at %v", err, getSchemaFilePath())
 	}
 
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error reading schema file: %w", err)
+	err = session.Query(string(contentBytes)).Exec()
+	if err != nil {
+		return fmt.Errorf("failed to execute CQL statement '%s': %w", string(contentBytes), err)
 	}
 
 	return nil
@@ -90,15 +60,8 @@ func setupTestStore(t *testing.T) (*CassandraTimerStore, func()) {
 	cluster.Timeout = 5 * time.Second
 	cluster.ConnectTimeout = 5 * time.Second
 
-	session, err := cluster.CreateSession()
-	if err != nil {
-		t.Skip("Cassandra not available, skipping integration tests:", err)
-		return nil, nil
-	}
-	session.Close()
-
 	// Create test keyspace and tables
-	err = createTestKeyspace()
+	err := createTestKeyspace()
 	if err != nil {
 		t.Fatal("Failed to create test keyspace:", err)
 	}

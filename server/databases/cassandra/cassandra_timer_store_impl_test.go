@@ -36,8 +36,8 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 	var dbMetadata string
 	var dbClaimedAt time.Time
 
-	query := "SELECT version, owner_id, metadata, claimed_at FROM shards WHERE shard_id = ?"
-	scanErr := store.session.Query(query, shardId).Scan(&dbVersion, &dbOwnerId, &dbMetadata, &dbClaimedAt)
+	query := "SELECT shard_version, shard_owner_id, shard_metadata, shard_claimed_at FROM timers WHERE shard_id = ? AND row_type = ?"
+	scanErr := store.session.Query(query, shardId, 1).Scan(&dbVersion, &dbOwnerId, &dbMetadata, &dbClaimedAt)
 
 	require.NoError(t, scanErr)
 	assert.Equal(t, int64(1), dbVersion)
@@ -72,8 +72,8 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 	// Verify final state
 	var dbVersion int64
 	var dbOwnerId string
-	query := "SELECT version, owner_id FROM shards WHERE shard_id = ?"
-	scanErr := store.session.Query(query, shardId).Scan(&dbVersion, &dbOwnerId)
+	query := "SELECT shard_version, shard_owner_id FROM timers WHERE shard_id = ? AND row_type = ?"
+	scanErr := store.session.Query(query, shardId, 1).Scan(&dbVersion, &dbOwnerId)
 
 	require.NoError(t, scanErr)
 	assert.Equal(t, int64(3), dbVersion)
@@ -144,8 +144,8 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 	// Verify final database state
 	var dbVersion int64
 	var dbOwnerId string
-	query := "SELECT version, owner_id FROM shards WHERE shard_id = ?"
-	scanErr := store.session.Query(query, shardId).Scan(&dbVersion, &dbOwnerId)
+	query := "SELECT shard_version, shard_owner_id FROM timers WHERE shard_id = ? AND row_type = ?"
+	scanErr := store.session.Query(query, shardId, 1).Scan(&dbVersion, &dbOwnerId)
 
 	require.NoError(t, scanErr)
 	assert.Equal(t, maxVersion, dbVersion, "Database version should match highest successful claim")
@@ -168,8 +168,8 @@ func TestClaimShardOwnership_NilMetadata(t *testing.T) {
 
 	// Verify metadata is empty/null in database
 	var dbMetadata *string
-	query := "SELECT metadata FROM shards WHERE shard_id = ?"
-	scanErr := store.session.Query(query, shardId).Scan(&dbMetadata)
+	query := "SELECT shard_metadata FROM timers WHERE shard_id = ? AND row_type = ?"
+	scanErr := store.session.Query(query, shardId, 1).Scan(&dbMetadata)
 
 	require.NoError(t, scanErr)
 	// Should be empty string or null
@@ -209,8 +209,8 @@ func TestClaimShardOwnership_ComplexMetadata(t *testing.T) {
 
 	// Verify metadata is properly serialized
 	var dbMetadata string
-	query := "SELECT metadata FROM shards WHERE shard_id = ?"
-	scanErr := store.session.Query(query, shardId).Scan(&dbMetadata)
+	query := "SELECT shard_metadata FROM timers WHERE shard_id = ? AND row_type = ?"
+	scanErr := store.session.Query(query, shardId, 1).Scan(&dbMetadata)
 
 	require.NoError(t, scanErr)
 	assert.Contains(t, dbMetadata, "i-1234567890abcdef0")

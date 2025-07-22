@@ -17,6 +17,9 @@ type CassandraTimerStore struct {
 	session *gocql.Session
 }
 
+const rowTypeShard = int16(1) // 1 = shard record 
+const rowTypeTimer = int16(2) // 2 = timer record
+
 // NewCassandraTimerStore creates a new Cassandra timer store
 func NewCassandraTimerStore(config *config.CassandraConnectConfig) (databases.TimerStore, error) {
 	cluster := gocql.NewCluster(config.Hosts...)
@@ -43,7 +46,6 @@ func (c *CassandraTimerStore) Close() error {
 	}
 	return nil
 }
-
 func (c *CassandraTimerStore) ClaimShardOwnership(
 	ctx context.Context, shardId int, ownerId string, metadata interface{},
 ) (shardVersion int64, retErr *databases.DbError) {
@@ -61,11 +63,11 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	// When CAS fails, Cassandra returns the existing row values
 	previous := make(map[string]interface{})
 
-	// First, try to read the current shard record
+	// First, try to read the current shard record from unified timers table
 	var currentVersion int64
 	var currentOwnerId string
-	query := `SELECT version, owner_id FROM shards WHERE shard_id = ?`
-	err := c.session.Query(query, shardId).WithContext(ctx).Scan(&currentVersion, &currentOwnerId)
+	query := `SELECT shard_version, shard_owner_id FROM timers WHERE shard_id = ? AND row_type = ?`
+	err := c.session.Query(query, shardId, rowTypeShard).WithContext(ctx).Scan(&currentVersion, &currentOwnerId)
 
 	if err != nil && !errors.Is(err, gocql.ErrNotFound) {
 		return 0, databases.NewGenericDbError("failed to read shard record: %w", err)
@@ -74,10 +76,10 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	if errors.Is(err, gocql.ErrNotFound) {
 		// Shard doesn't exist, create it with version 1
 		newVersion := int64(1)
-		insertQuery := `INSERT INTO shards (shard_id, version, owner_id, claimed_at, metadata) 
-		                VALUES (?, ?, ?, ?, ?) IF NOT EXISTS`
+		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, shard_version, shard_owner_id, shard_claimed_at, shard_metadata) 
+		                VALUES (?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`
 
-		applied, err := c.session.Query(insertQuery, shardId, newVersion, ownerId, now, metadataJSON).
+		applied, err := c.session.Query(insertQuery, shardId, rowTypeShard, nil, nil, newVersion, ownerId, now, metadataJSON).
 			WithContext(ctx).MapScanCAS(previous)
 
 		if err != nil {
@@ -88,10 +90,10 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 			// Another instance created the record concurrently, return conflict info
 			conflictInfo := &databases.ShardInfo{
 				ShardId:      int64(previous["shard_id"].(int)),
-				OwnerId:      previous["owner_id"].(string),
-				ClaimedAt:    previous["claimed_at"].(time.Time),
-				Metadata:     previous["metadata"],
-				ShardVersion: previous["version"].(int64),
+				OwnerId:      previous["shard_owner_id"].(string),
+				ClaimedAt:    previous["shard_claimed_at"].(time.Time),
+				Metadata:     previous["shard_metadata"],
+				ShardVersion: previous["shard_version"].(int64),
 			}
 			return 0, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil, conflictInfo)
 		} else {
@@ -102,10 +104,10 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 
 	// Update the shard with new version and ownership using optimistic concurrency control
 	newVersion := currentVersion + 1
-	updateQuery := `UPDATE shards SET version = ?, owner_id = ?, claimed_at = ?, metadata = ? 
-	                WHERE shard_id = ? IF version = ?`
+	updateQuery := `UPDATE timers SET shard_version = ?, shard_owner_id = ?, shard_claimed_at = ?, shard_metadata = ? 
+	                WHERE shard_id = ? AND row_type = ? IF shard_version = ?`
 
-	applied, err := c.session.Query(updateQuery, newVersion, ownerId, now, metadataJSON, shardId, currentVersion).
+	applied, err := c.session.Query(updateQuery, newVersion, ownerId, now, metadataJSON, shardId, rowTypeShard, currentVersion).
 		WithContext(ctx).MapScanCAS(previous)
 
 	if err != nil {
@@ -115,7 +117,7 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	if !applied {
 		// Version changed concurrently, return conflict info
 		conflictInfo := &databases.ShardInfo{
-			ShardVersion: previous["version"].(int64),
+			ShardVersion: previous["shard_version"].(int64),
 		}
 		return 0, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
 	}
