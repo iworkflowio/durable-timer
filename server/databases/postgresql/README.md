@@ -5,7 +5,7 @@ This directory contains the PostgreSQL implementation of the `TimerStore` interf
 ## Files
 
 - `postgresql_timer_store_impl.go` - PostgreSQL implementation of the TimerStore interface
-- `postgresql_timer_store_impl_test.go` - Integration tests for the PostgreSQL implementation
+- `postgresql_timer_store_impl_claim_test.go` - Integration tests for the ClaimShardOwnership method
 - `postgresql_test_util.go` - Test utilities for setting up PostgreSQL test environment
 - `schema/v1.sql` - PostgreSQL schema definition for the unified timers table
 
