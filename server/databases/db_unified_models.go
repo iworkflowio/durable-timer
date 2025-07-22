@@ -5,12 +5,22 @@ import (
 )
 
 type (
+	ShardInfo struct {
+		ShardId      int64
+		OwnerId      string
+		ShardVersion int64
+		Metadata     interface{}
+		ClaimedAt    time.Time
+	}
+
 	DbError struct {
 		OriginalError      error
 		CustomMessage      string
 		ShardConditionFail bool
+		ClaimedShardInfo   *ShardInfo
 		NotExists          bool
 	}
+
 	// DbTimer is the timer model stored in DB
 	DbTimer struct {
 
@@ -88,10 +98,11 @@ func NewGenericDbError(msg string, err error) *DbError {
 	}
 }
 
-func NewDbErrorOnShardConditionFail(msg string, err error) *DbError {
+func NewDbErrorOnShardConditionFail(msg string, err error, shardInfo *ShardInfo) *DbError {
 	return &DbError{
 		OriginalError:      err,
 		CustomMessage:      msg,
 		ShardConditionFail: true,
+		ClaimedShardInfo:   shardInfo,
 	}
 }
