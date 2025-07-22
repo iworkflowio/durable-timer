@@ -1,0 +1,46 @@
+{
+  "TableName": "timers",
+  "AttributeDefinitions": [
+    {
+      "AttributeName": "shard_id",
+      "AttributeType": "N"
+    },
+    {
+      "AttributeName": "sort_key",
+      "AttributeType": "S"
+    },
+    {
+      "AttributeName": "timer_execute_at",
+      "AttributeType": "S"
+    }
+  ],
+  "KeySchema": [
+    {
+      "AttributeName": "shard_id",
+      "KeyType": "HASH"
+    },
+    {
+      "AttributeName": "sort_key",
+      "KeyType": "RANGE"
+    }
+  ],
+  "LocalSecondaryIndexes": [
+    {
+      "IndexName": "ExecuteAtIndex",
+      "KeySchema": [
+        {
+          "AttributeName": "shard_id",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "timer_execute_at",
+          "KeyType": "RANGE"
+        }
+      ],
+      "Projection": {
+        "ProjectionType": "ALL"
+      }
+    }
+  ],
+  "BillingMode": "PAY_PER_REQUEST"
+} 
