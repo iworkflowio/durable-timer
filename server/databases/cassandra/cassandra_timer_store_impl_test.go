@@ -214,7 +214,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 3
-	numGoroutines := 10
+	numGoroutines := 100
 
 	var wg sync.WaitGroup
 	results := make([]struct {
@@ -242,6 +242,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 
 	// Analyze results
 	successCount := 0
+	failureCount := 0
 	var maxVersion int64
 	var lastSuccessfulOwner string
 
@@ -252,11 +253,16 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 				maxVersion = result.version
 				lastSuccessfulOwner = result.ownerId
 			}
+		} else {
+			failureCount++
+			assert.True(t, result.err.ShardConditionFail, "should fail on shard condition, but is %s", result.err.OriginalError)
+			assert.Greater(t, result.err.ClaimedShardInfo.ShardVersion, int64(0), "should have a valid version")
 		}
 	}
 
 	// All goroutines should either succeed or fail, but we should have at least some successes
 	assert.Greater(t, successCount, 0, "At least one claim should succeed")
+	assert.Greater(t, failureCount, 0, "Should have some failures due to concurrency")
 	assert.Greater(t, maxVersion, int64(0), "Maximum version should be positive")
 
 	// Verify final database state

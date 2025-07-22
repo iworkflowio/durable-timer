@@ -2,6 +2,15 @@
 -- Initial schema for the distributed durable timer service
 -- Here assumes the keyspace has been created
 
+-- Shards table for ownership management
+CREATE TABLE shards (
+    shard_id int,
+    version bigint,
+    owner_id text,
+    claimed_at timestamp,
+    metadata text,  -- JSON serialized
+    PRIMARY KEY (shard_id)
+);
 
 -- Create timers table with optimized primary key design
 CREATE TABLE IF NOT EXISTS timers (
