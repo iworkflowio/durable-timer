@@ -1,8 +1,17 @@
 package databases
 
 import (
+	"github.com/gocql/gocql"
 	"time"
 )
+
+const RowTypeShard = int16(1) // 1 = shard record
+const RowTypeTimer = int16(2) // 2 = timer record
+
+// ZeroTimestamp and ZeroUUID are for timer fields since they're part of primary key but not used for shard records
+// 1969-12-31 16:00:00 -0800 PST and 00000000-0000-0000-0000-000000000000
+var ZeroTimestamp = time.Unix(0, 0) // Unix epoch
+var ZeroUUID = gocql.UUID{}         // Zero UUID
 
 type (
 	ShardInfo struct {

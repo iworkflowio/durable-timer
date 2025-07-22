@@ -17,9 +17,6 @@ type CassandraTimerStore struct {
 	session *gocql.Session
 }
 
-const rowTypeShard = int16(1) // 1 = shard record 
-const rowTypeTimer = int16(2) // 2 = timer record
-
 // NewCassandraTimerStore creates a new Cassandra timer store
 func NewCassandraTimerStore(config *config.CassandraConnectConfig) (databases.TimerStore, error) {
 	cluster := gocql.NewCluster(config.Hosts...)
@@ -67,7 +64,7 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	var currentVersion int64
 	var currentOwnerId string
 	query := `SELECT shard_version, shard_owner_id FROM timers WHERE shard_id = ? AND row_type = ?`
-	err := c.session.Query(query, shardId, rowTypeShard).WithContext(ctx).Scan(&currentVersion, &currentOwnerId)
+	err := c.session.Query(query, shardId, databases.RowTypeShard).WithContext(ctx).Scan(&currentVersion, &currentOwnerId)
 
 	if err != nil && !errors.Is(err, gocql.ErrNotFound) {
 		return 0, databases.NewGenericDbError("failed to read shard record: %w", err)
@@ -76,10 +73,11 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	if errors.Is(err, gocql.ErrNotFound) {
 		// Shard doesn't exist, create it with version 1
 		newVersion := int64(1)
+
 		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, shard_version, shard_owner_id, shard_claimed_at, shard_metadata) 
 		                VALUES (?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`
 
-		applied, err := c.session.Query(insertQuery, shardId, rowTypeShard, nil, nil, newVersion, ownerId, now, metadataJSON).
+		applied, err := c.session.Query(insertQuery, shardId, databases.RowTypeShard, databases.ZeroTimestamp, databases.ZeroUUID, newVersion, ownerId, now, metadataJSON).
 			WithContext(ctx).MapScanCAS(previous)
 
 		if err != nil {
@@ -105,9 +103,10 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	// Update the shard with new version and ownership using optimistic concurrency control
 	newVersion := currentVersion + 1
 	updateQuery := `UPDATE timers SET shard_version = ?, shard_owner_id = ?, shard_claimed_at = ?, shard_metadata = ? 
-	                WHERE shard_id = ? AND row_type = ? IF shard_version = ?`
+	                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF shard_version = ?`
 
-	applied, err := c.session.Query(updateQuery, newVersion, ownerId, now, metadataJSON, shardId, rowTypeShard, currentVersion).
+	applied, err := c.session.Query(updateQuery, newVersion, ownerId, now, metadataJSON,
+		shardId, databases.RowTypeShard, databases.ZeroTimestamp, databases.ZeroUUID, currentVersion).
 		WithContext(ctx).MapScanCAS(previous)
 
 	if err != nil {
