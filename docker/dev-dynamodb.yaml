@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  dynamodb:
+    image: amazon/dynamodb-local:latest
+    container_name: timer-service-dynamodb-dev
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - dynamodb_data:/home/dynamodblocal/data
+    networks:
+      - timer-service-network
+    # healthcheck: # not sure why this is not working
+    #   test: ["CMD", "nc", "-z", "localhost", "8000"]
+    #   timeout: 20s
+    #   retries: 10
+    #   interval: 10s
+    #   start_period: 30s
+
+  dynamodb-init:
+    image: amazon/aws-cli:latest
+    depends_on:
+      dynamodb:
+        condition: service_started
+    volumes:
+      - ../server/databases/dynamodb/schema:/schema
+    networks:
+      - timer-service-network
+    environment:
+      AWS_ACCESS_KEY_ID: dummy
+      AWS_SECRET_ACCESS_KEY: dummy
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for DynamoDB Local to be ready...' &&
+        until curl http://dynamodb:8000; do
+          echo 'DynamoDB not ready, waiting...'
+          sleep 2
+        done &&
+        echo 'Creating DynamoDB tables from schema...' &&
+        aws dynamodb create-table --endpoint-url http://dynamodb:8000 --cli-input-json file:///schema/v1.json &&
+        echo 'DynamoDB schema execution completed successfully!'
+      "
+
+volumes:
+  dynamodb_data:
+
+networks:
+  timer-service-network:
+    driver: bridge 
