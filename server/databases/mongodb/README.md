@@ -127,4 +127,5 @@ The MongoDB implementation uses:
 - **JSON Serialization**: Metadata is serialized to JSON strings for consistent handling
 - **Atomic Operations**: Uses MongoDB's atomic update operations for concurrency safety
 - **Error Handling**: Properly distinguishes between duplicate key errors and other MongoDB errors
-- **Connection Pooling**: Configurable connection pool settings for production use 
+- **Connection Pooling**: Configurable connection pool settings for production use
+- **Schema Consistency**: Tests use the same `v1.js` schema file as production via Docker `mongosh` execution 

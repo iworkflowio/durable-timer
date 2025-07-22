@@ -5,15 +5,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/iworkflowio/durable-timer/config"
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -40,81 +39,34 @@ func getSchemaFilePath() string {
 	return filepath.Join(dir, "schema", "v1.js")
 }
 
-// executeSchemaFile reads and executes MongoDB commands from the schema file
-func executeSchemaFile(database *mongo.Database) error {
-	contentBytes, err := os.ReadFile(getSchemaFilePath())
+// executeSchemaFileWithMongosh reads and executes MongoDB commands from the schema file using mongosh
+func executeSchemaFileWithMongosh() error {
+	schemaFilePath := getSchemaFilePath()
+	if _, err := os.Stat(schemaFilePath); os.IsNotExist(err) {
+		log.Fatalf("Schema file not found at %s", schemaFilePath)
+	}
+
+	// Read the schema file content
+	contentBytes, err := os.ReadFile(schemaFilePath)
 	if err != nil {
-		log.Fatalf("Error reading file: %v at %v", err, getSchemaFilePath())
+		return fmt.Errorf("failed to read schema file: %w", err)
 	}
 
-	content := string(contentBytes)
+	// Use docker exec to run mongosh inside the MongoDB container
+	cmd := exec.Command("docker", "exec", "timer-service-mongodb-dev", "mongosh",
+		"--username", testUsername,
+		"--password", testPassword,
+		"--authenticationDatabase", testAuthDatabase,
+		testDatabase,
+		"--eval", string(contentBytes))
 
-	// Split by semicolon to get individual statements
-	statements := strings.Split(content, ";")
-
-	ctx := context.Background()
-	for _, stmt := range statements {
-		// Trim whitespace and skip empty statements
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
-			continue
-		}
-
-		// Skip comment-only lines
-		if strings.HasPrefix(stmt, "//") {
-			continue
-		}
-
-		// Execute MongoDB JavaScript command
-		// Note: This is a simplified approach - in reality, you'd parse the JS and convert to Go MongoDB operations
-		// For now, we'll create the collection and indexes manually
-		if strings.Contains(stmt, "createCollection") {
-			err = database.CreateCollection(ctx, "timers")
-			if err != nil {
-				// Collection might already exist, ignore error
-				continue
-			}
-		}
-
-		// Handle index creation - create the two indexes from the design doc
-		if strings.Contains(stmt, "createIndex") {
-			collection := database.Collection("timers")
-
-			// Create compound index for timer execution queries
-			if strings.Contains(stmt, "timer_execute_at") {
-				indexModel := mongo.IndexModel{
-					Keys: map[string]interface{}{
-						"shard_id":         1,
-						"row_type":         1,
-						"timer_execute_at": 1,
-						"timer_uuid":       1,
-					},
-					Options: options.Index().SetUnique(true),
-				}
-				_, err = collection.Indexes().CreateOne(ctx, indexModel)
-				if err != nil {
-					return fmt.Errorf("failed to create execution index: %w", err)
-				}
-			}
-
-			// Create unique index for timer CRUD operations
-			if strings.Contains(stmt, "timer_id") {
-				indexModel := mongo.IndexModel{
-					Keys: map[string]interface{}{
-						"shard_id": 1,
-						"row_type": 1,
-						"timer_id": 1,
-					},
-					Options: options.Index().SetUnique(true),
-				}
-				_, err = collection.Indexes().CreateOne(ctx, indexModel)
-				if err != nil {
-					return fmt.Errorf("failed to create timer lookup index: %w", err)
-				}
-			}
-		}
+	// Run the command
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker mongosh command failed: %w\nOutput: %s", err, string(output))
 	}
 
+	log.Printf("Schema file %s executed successfully with docker mongosh", schemaFilePath)
 	return nil
 }
 
@@ -170,46 +122,10 @@ func createTestDatabase() error {
 		// Database might not exist, ignore error
 	}
 
-	// Get database reference (MongoDB creates it lazily)
-	database := client.Database(testDatabase)
-
-	// Create the timers collection explicitly
-	ctx := context.Background()
-	err = database.CreateCollection(ctx, "timers")
+	// Execute schema from v1.js file using mongosh command
+	err = executeSchemaFileWithMongosh()
 	if err != nil {
-		return fmt.Errorf("failed to create timers collection: %w", err)
-	}
-
-	// Create the required indexes directly
-	collection := database.Collection("timers")
-
-	// Create compound index for timer execution queries (unique)
-	executionIndexModel := mongo.IndexModel{
-		Keys: bson.D{
-			{"shard_id", 1},
-			{"row_type", 1},
-			{"timer_execute_at", 1},
-			{"timer_uuid", 1},
-		},
-		Options: options.Index().SetUnique(true),
-	}
-	_, err = collection.Indexes().CreateOne(ctx, executionIndexModel)
-	if err != nil {
-		return fmt.Errorf("failed to create execution index: %w", err)
-	}
-
-	// Create unique index for timer CRUD operations
-	timerIndexModel := mongo.IndexModel{
-		Keys: bson.D{
-			{"shard_id", 1},
-			{"row_type", 1},
-			{"timer_id", 1},
-		},
-		Options: options.Index().SetUnique(true),
-	}
-	_, err = collection.Indexes().CreateOne(ctx, timerIndexModel)
-	if err != nil {
-		return fmt.Errorf("failed to create timer lookup index: %w", err)
+		return fmt.Errorf("failed to execute schema file: %w", err)
 	}
 
 	return nil
