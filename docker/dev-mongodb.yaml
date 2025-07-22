@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: timer-service-mongodb-dev
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: mongodb_root_password
+      MONGO_INITDB_DATABASE: timer_service
+    ports:
+      - "27017:27017"
+    networks:
+      - timer-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+      start_period: 30s
+
+  mongodb-init:
+    image: mongo:7
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ../server/databases/mongodb/schema:/schema
+    networks:
+      - timer-network
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for MongoDB to be ready...' &&
+        until mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval 'db.runCommand({ping:1})' --quiet; do
+          echo 'MongoDB not ready, waiting...'
+          sleep 2
+        done &&
+        echo 'Creating timer_service database and user...' &&
+        mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval '
+          use timer_service;
+          try {
+            db.createUser({
+              user: \"timer_user\",
+              pwd: \"timer_password\", 
+              roles: [{role: \"readWrite\", db: \"timer_service\"}]
+            });
+            print(\"User timer_user created successfully\");
+          } catch (e) {
+            if (e.code === 51003) {
+              print(\"User timer_user already exists\");
+            } else {
+              throw e;
+            }
+          }
+        ' &&
+        echo 'Executing schema with root user...' &&
+        mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin timer_service < /schema/v1.js &&
+        echo 'Schema execution completed successfully!'
+      "
+
+networks:
+  timer-network:
+    driver: bridge

@@ -7,6 +7,8 @@ services:
     environment:
       POSTGRES_PASSWORD: postgres_root_password
       POSTGRES_DB: timer_service
+    networks:
+      - timer-network
     ports:
       - "5432:5432"
     healthcheck:
@@ -21,6 +23,8 @@ services:
     depends_on:
       postgresql:
         condition: service_healthy
+    networks:
+      - timer-network
     volumes:
       - ../server/databases/postgresql/schema:/schema
     entrypoint: >
@@ -38,5 +42,6 @@ services:
         echo 'Schema execution completed successfully!'
       "
 
-volumes:
-  postgresql_data: 
+networks:
+  timer-network:
+    driver: bridge

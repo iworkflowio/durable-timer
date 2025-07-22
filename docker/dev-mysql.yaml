@@ -11,6 +11,8 @@ services:
       MYSQL_PASSWORD: timer_password
     ports:
       - "3306:3306"
+    networks:
+      - timer-network
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "timer_user", "-ptimer_password"]
       timeout: 20s
@@ -25,6 +27,8 @@ services:
         condition: service_healthy
     volumes:
       - ../server/databases/mysql/schema:/schema
+    networks:
+      - timer-network
     entrypoint: >
       sh -c "
         echo 'Waiting for MySQL to be ready...' &&
@@ -37,5 +41,6 @@ services:
         echo 'Schema execution completed successfully!'
       "
 
-volumes:
-  mysql_data: 
+networks:
+  timer-network:
+    driver: bridge
