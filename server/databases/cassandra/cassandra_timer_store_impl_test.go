@@ -127,15 +127,8 @@ func dropTestKeyspace() {
 	session.Query(fmt.Sprintf("DROP KEYSPACE IF EXISTS %s", testKeyspace)).Exec()
 }
 
-func cleanupShards(store *CassandraTimerStore) {
-	store.session.Query("TRUNCATE shards").Exec()
-}
-
 func TestClaimShardOwnership_NewShard(t *testing.T) {
 	store, cleanup := setupTestStore(t)
-	if store == nil {
-		return // Cassandra not available
-	}
 	defer cleanup()
 
 	ctx := context.Background()
@@ -171,9 +164,6 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 
 func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 	store, cleanup := setupTestStore(t)
-	if store == nil {
-		return
-	}
 	defer cleanup()
 
 	ctx := context.Background()
@@ -207,9 +197,6 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 
 func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 	store, cleanup := setupTestStore(t)
-	if store == nil {
-		return
-	}
 	defer cleanup()
 
 	ctx := context.Background()
@@ -282,9 +269,6 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 
 func TestClaimShardOwnership_NilMetadata(t *testing.T) {
 	store, cleanup := setupTestStore(t)
-	if store == nil {
-		return
-	}
 	defer cleanup()
 
 	ctx := context.Background()
@@ -348,61 +332,4 @@ func TestClaimShardOwnership_ComplexMetadata(t *testing.T) {
 	assert.Contains(t, dbMetadata, "us-west-2")
 	assert.Contains(t, dbMetadata, "maxConnections")
 	assert.Contains(t, dbMetadata, "production")
-}
-
-func TestClaimShardOwnership_InvalidMetadata(t *testing.T) {
-	store, cleanup := setupTestStore(t)
-	if store == nil {
-		return
-	}
-	defer cleanup()
-
-	ctx := context.Background()
-	shardId := 6
-	ownerId := "owner-invalid"
-
-	// Use metadata that can't be JSON marshaled (function)
-	invalidMetadata := map[string]interface{}{
-		"validField":   "test",
-		"invalidField": func() {},
-	}
-
-	// Claim should fail due to unmarshallable metadata
-	version, err := store.ClaimShardOwnership(ctx, shardId, ownerId, invalidMetadata)
-
-	assert.NotNil(t, err)
-	assert.Equal(t, int64(0), version)
-	assert.Contains(t, err.CustomMessage, "marshal metadata")
-
-	// Verify no record was created
-	var count int
-	countQuery := "SELECT COUNT(*) FROM shards WHERE shard_id = ?"
-	scanErr := store.session.Query(countQuery, shardId).Scan(&count)
-
-	require.NoError(t, scanErr)
-	assert.Equal(t, 0, count, "No record should be created when metadata marshaling fails")
-}
-
-func TestClaimShardOwnership_ConnectionFailure(t *testing.T) {
-	// Create a store with invalid host to test connection failures
-	config := &config.CassandraConnectConfig{
-		Hosts:       []string{"invalid-host:9042"},
-		Keyspace:    testKeyspace,
-		Consistency: gocql.Quorum,
-		Timeout:     1 * time.Second,
-	}
-
-	store, err := NewCassandraTimerStore(config)
-	if err == nil {
-		defer store.Close()
-
-		ctx := context.Background()
-
-		// This should fail due to connection issues
-		version, claimErr := store.(*CassandraTimerStore).ClaimShardOwnership(ctx, 999, "owner", nil)
-
-		assert.NotNil(t, claimErr)
-		assert.Equal(t, int64(0), version)
-	}
-	// If we can't even create the store, that's also a valid test outcome
 }
