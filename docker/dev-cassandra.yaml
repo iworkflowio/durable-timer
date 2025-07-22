@@ -30,7 +30,7 @@ services:
 
   # Cassandra Initialization, use the init script to create the keyspace and tables
   cassandra-init:
-    image: cassandra:4.1 # use the same image as cassandra, so that the init script is compatible
+    image: cassandra:5 # use the same image as cassandra, so that the init script is compatible
     container_name: cassandra-init
     depends_on:
       cassandra:

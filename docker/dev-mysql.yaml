@@ -19,7 +19,7 @@ services:
       start_period: 30s
 
   mysql-init:
-    image: mysql:8.0
+    image: mysql:8
     depends_on:
       mysql:
         condition: service_healthy
