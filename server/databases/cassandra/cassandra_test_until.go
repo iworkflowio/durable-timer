@@ -2,11 +2,13 @@ package cassandra
 
 import (
 	"fmt"
+	"os"
+	"testing"
+	"time"
+
 	"github.com/gocql/gocql"
 	"github.com/iworkflowio/durable-timer/config"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 const (
@@ -14,10 +16,18 @@ const (
 	testHost     = "localhost:9042"
 )
 
+// getTestHost returns the Cassandra test host, checking environment variable first
+func getTestHost() string {
+	if host := os.Getenv("CASSANDRA_TEST_HOST"); host != "" {
+		return host
+	}
+	return testHost
+}
+
 // setupTestStore creates a test store with a clean test keyspace
 func setupTestStore(t *testing.T) (*CassandraTimerStore, func()) {
 	// Try to connect to Cassandra
-	cluster := gocql.NewCluster(testHost)
+	cluster := gocql.NewCluster(getTestHost())
 	cluster.Timeout = 5 * time.Second
 	cluster.ConnectTimeout = 5 * time.Second
 
@@ -36,7 +46,7 @@ func setupTestStore(t *testing.T) (*CassandraTimerStore, func()) {
 
 	// Create store with test configuration
 	config := &config.CassandraConnectConfig{
-		Hosts:       []string{testHost},
+		Hosts:       []string{getTestHost()},
 		Keyspace:    testKeyspace,
 		Consistency: gocql.Quorum,
 		Timeout:     10 * time.Second,
@@ -56,7 +66,7 @@ func setupTestStore(t *testing.T) (*CassandraTimerStore, func()) {
 }
 
 func createTestKeyspace() error {
-	cluster := gocql.NewCluster(testHost)
+	cluster := gocql.NewCluster(getTestHost())
 	cluster.Timeout = 5 * time.Second
 	session, err := cluster.CreateSession()
 	if err != nil {
@@ -111,7 +121,7 @@ func createTestKeyspace() error {
 }
 
 func dropTestKeyspace() {
-	cluster := gocql.NewCluster(testHost)
+	cluster := gocql.NewCluster(getTestHost())
 	cluster.Timeout = 5 * time.Second
 	session, err := cluster.CreateSession()
 	if err != nil {
