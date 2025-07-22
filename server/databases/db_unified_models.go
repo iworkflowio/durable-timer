@@ -103,7 +103,7 @@ type (
 )
 
 func (d DbError) Error() string {
-	return d.CustomMessage + "\n" + d.OriginalError.Error()
+	return d.CustomMessage + "\n" + "Original error: " + d.OriginalError.Error()
 }
 
 var _ error = (*DbError)(nil)

@@ -56,7 +56,7 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 		metadataJSON = string(metadataBytes)
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	// When CAS fails, Cassandra returns the existing row values
 	previous := make(map[string]interface{})
 

@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  postgresql:
+    image: postgres:17
+    container_name: timer-service-postgresql-dev
+    environment:
+      POSTGRES_PASSWORD: postgres_root_password
+      POSTGRES_DB: timer_service
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d timer_service"]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+      start_period: 30s
+
+  postgresql-init:
+    image: postgres:17
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    volumes:
+      - ../server/databases/postgresql/schema:/schema
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for PostgreSQL to be ready...' &&
+        until pg_isready -h postgresql -U postgres -d timer_service; do
+          echo 'PostgreSQL not ready, waiting...'
+          sleep 2
+        done &&
+        echo 'Creating timer_user...' &&
+        PGPASSWORD=postgres_root_password psql -h postgresql -U postgres -d timer_service -c \"CREATE USER timer_user WITH PASSWORD 'timer_password';\" || echo 'User may already exist' &&
+        PGPASSWORD=postgres_root_password psql -h postgresql -U postgres -d timer_service -c \"GRANT ALL PRIVILEGES ON DATABASE timer_service TO timer_user;\" &&
+        echo 'Executing schema...' &&
+        PGPASSWORD=postgres_root_password psql -h postgresql -U postgres -d timer_service -f /schema/v1.sql &&
+        echo 'Schema execution completed successfully!'
+      "
+
+volumes:
+  postgresql_data: 
