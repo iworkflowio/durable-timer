@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,15 +40,32 @@ func getSchemaFilePath() string {
 
 // executeSchemaFile reads and executes CQL statements from the schema file
 func executeSchemaFile(session *gocql.Session) error {
-
 	contentBytes, err := os.ReadFile(getSchemaFilePath())
 	if err != nil {
 		log.Fatalf("Error reading file: %v at %v", err, getSchemaFilePath())
 	}
 
-	err = session.Query(string(contentBytes)).Exec()
-	if err != nil {
-		return fmt.Errorf("failed to execute CQL statement '%s': %w", string(contentBytes), err)
+	content := string(contentBytes)
+
+	// Split by semicolon to get individual statements
+	statements := strings.Split(content, ";")
+
+	for _, stmt := range statements {
+		// Trim whitespace and skip empty statements
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+
+		// Skip comment-only lines
+		if strings.HasPrefix(stmt, "--") {
+			continue
+		}
+
+		err = session.Query(stmt).Exec()
+		if err != nil {
+			return fmt.Errorf("failed to execute CQL statement '%s': %w", stmt, err)
+		}
 	}
 
 	return nil
