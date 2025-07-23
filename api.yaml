@@ -28,15 +28,13 @@ servers:
     description: Production server
 
 paths:
-  /timers/{namespace}:
+  /timers/create:
     post:
       summary: Create a new timer
       description: |
         Creates a new one-time timer that will execute an HTTP callback at the specified time.
         Timer IDs are used for deduplication within the namespace 
       operationId: createTimer
-      parameters:
-        - $ref: '#/components/parameters/Namespace'
       requestBody:
         required: true
         content:
@@ -47,6 +45,7 @@ paths:
               simple_timer:
                 summary: Simple timer example
                 value:
+                  namespace: "example-namespace"
                   id: "user-notification-123"
                   executeAt: "2024-12-20T15:30:00Z"
                   callbackUrl: "https://api.example.com/webhooks/timer"
@@ -57,6 +56,7 @@ paths:
               complex_timer:
                 summary: Timer with custom retry policy
                 value:
+                  namespace: "example-namespace"
                   id: "payment-retry-456"
                   executeAt: "2024-12-20T10:00:00Z"
                   callbackUrl: "https://payment.example.com/process"
@@ -81,14 +81,23 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
 
-  /timers/{namespace}/{timerId}:
-    get:
+  /timers/get:
+    post:
       summary: Get timer status and detailed information
       description: Query timer status and detailed information as specified in FR-1.5
       operationId: getTimer
-      parameters:
-        - $ref: '#/components/parameters/Namespace'
-        - $ref: '#/components/parameters/TimerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimerSelection'
+            examples:
+              get_timer:
+                summary: Get timer example
+                value:
+                  namespace: "example-namespace"
+                  timerId: "user-notification-123"
       responses:
         '200':
           description: Timer details
@@ -96,20 +105,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Timer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
 
-    put:
+  /timers/update:
+    post:
       summary: Update an existing timer
       description: |
         Update a timer's execution time, callback URL, or payload. 
         Only pending timers can be updated.
       operationId: updateTimer
-      parameters:
-        - $ref: '#/components/parameters/Namespace'
-        - $ref: '#/components/parameters/TimerId'
       requestBody:
         required: true
         content:
@@ -120,10 +129,14 @@ paths:
               update_time:
                 summary: Update execution time
                 value:
+                  namespace: "example-namespace"
+                  timerId: "user-notification-123"
                   executeAt: "2024-12-21T15:30:00Z"
               update_payload:
                 summary: Update payload
                 value:
+                  namespace: "example-namespace"
+                  timerId: "user-notification-123"
                   payload:
                     userId: "user456"
                     action: "send_reminder"
@@ -142,50 +155,64 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
 
-    delete:
+  /timers/delete:
+    post:
       summary: Delete a timer
       description: |
         Cancel and delete a timer. Only pending timers can be deleted.
         Once deleted, the timer will not execute its callback.
       operationId: deleteTimer
-      parameters:
-        - $ref: '#/components/parameters/Namespace'
-        - $ref: '#/components/parameters/TimerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimerSelection'
+            examples:
+              delete_timer:
+                summary: Delete timer example
+                value:
+                  namespace: "example-namespace"
+                  timerId: "user-notification-123"
       responses:
         '204':
           description: Timer deleted successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
 
 components:
-  parameters:
-    TimerId:
-      name: timerId
-      in: path
-      required: true
-      description: Unique identifier for the timer within the namespace
-      schema:
-        type: string
-        example: "user-notification-123"
-    Namespace:
-      name: namespace
-      in: path
-      required: true
-      description: Namespace identifier for the timer. It is for timer ID uniqueness. Also used for scalability design(tied to the number of shards). Must be one of the namespaces configured in the system.
-      schema:
-        type: string
-        example: "example-namespace"
-
   schemas:
+    TimerSelection:
+      type: object
+      required:
+        - namespace
+        - timerId
+      properties:
+        namespace:
+          type: string
+          description: Namespace identifier for the timer. It is for timer ID uniqueness. Also used for scalability design(tied to the number of shards). Must be one of the namespaces configured in the system.
+          example: "example-namespace"
+        timerId:
+          type: string
+          description: Unique identifier for the timer within the namespace
+          example: "user-notification-123"
+
     CreateTimerRequest:
       type: object
       required:
+        - namespace
         - id
         - executeAt
         - callbackUrl
       properties:
+        namespace:
+          type: string
+          description: Namespace identifier for the timer. It is for timer ID uniqueness. Also used for scalability design(tied to the number of shards). Must be one of the namespaces configured in the system.
+          example: "example-namespace"
         id:
           type: string
           description: Unique identifier for the timer within the namespace (used for deduplication)
@@ -230,7 +257,18 @@ components:
 
     UpdateTimerRequest:
       type: object
+      required:
+        - namespace
+        - timerId
       properties:
+        namespace:
+          type: string
+          description: Namespace identifier for the timer. It is for timer ID uniqueness. Also used for scalability design(tied to the number of shards). Must be one of the namespaces configured in the system.
+          example: "example-namespace"
+        timerId:
+          type: string
+          description: Unique identifier for the timer within the namespace
+          example: "user-notification-123"
         executeAt:
           type: string
           format: date-time

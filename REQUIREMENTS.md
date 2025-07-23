@@ -13,6 +13,7 @@ This document defines the requirements for building a distributed, durable timer
 - **FR-1.3**: Delete existing timers before they execute
 - **FR-1.4**: Update existing timers (change execution time, callback, or payload)
 - **FR-1.5**: Query timer status and detailed infomation
+- **FR-1.6**: Id deduplication and isolation per namespace
 
 ### 1.2 Callback Execution
 - **FR-2.1**: Support HTTP webhook callbacks, with configurable timeout
