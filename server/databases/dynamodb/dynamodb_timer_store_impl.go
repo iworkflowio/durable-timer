@@ -253,19 +253,168 @@ func extractShardInfoFromItem(item map[string]types.AttributeValue, shardId int6
 func isConditionalCheckFailedException(err error) bool {
 	var apiErr smithy.APIError
 	if errors.As(err, &apiErr) {
-		return apiErr.ErrorCode() == "ConditionalCheckFailedException"
+		return apiErr.ErrorCode() == "ConditionalCheckFailedException" ||
+			apiErr.ErrorCode() == "TransactionCanceledException"
 	}
 	return false
 }
 
-func (c *DynamoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+func (d *DynamoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
+	// Serialize payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON *string
+
+	if timer.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(timer.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadStr := string(payloadBytes)
+		payloadJSON = &payloadStr
+	}
+
+	if timer.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(timer.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyStr := string(retryPolicyBytes)
+		retryPolicyJSON = &retryPolicyStr
+	}
+
+	// Create timer sort key: TIMER#<namespace>#<timer_id>
+	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
+
+	// Create timer item
+	timerItem := map[string]types.AttributeValue{
+		"shard_id":                       &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+		"sort_key":                       &types.AttributeValueMemberS{Value: timerSortKey},
+		"row_type":                       &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeTimer))},
+		"timer_execute_at":               &types.AttributeValueMemberS{Value: timer.ExecuteAt.Format(time.RFC3339Nano)},
+		"timer_uuid":                     &types.AttributeValueMemberS{Value: databases.ZeroUUIDString}, // Placeholder UUID
+		"timer_id":                       &types.AttributeValueMemberS{Value: timer.Id},
+		"timer_namespace":                &types.AttributeValueMemberS{Value: timer.Namespace},
+		"timer_callback_url":             &types.AttributeValueMemberS{Value: timer.CallbackUrl},
+		"timer_callback_timeout_seconds": &types.AttributeValueMemberN{Value: strconv.Itoa(int(timer.CallbackTimeoutSeconds))},
+		"timer_created_at":               &types.AttributeValueMemberS{Value: timer.CreatedAt.Format(time.RFC3339Nano)},
+		"timer_attempts":                 &types.AttributeValueMemberN{Value: "0"},
+	}
+
+	if payloadJSON != nil {
+		timerItem["timer_payload"] = &types.AttributeValueMemberS{Value: *payloadJSON}
+	}
+
+	if retryPolicyJSON != nil {
+		timerItem["timer_retry_policy"] = &types.AttributeValueMemberS{Value: *retryPolicyJSON}
+	}
+
+	// Prepare shard key for condition check
+	shardKey := map[string]types.AttributeValue{
+		"shard_id": &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+		"sort_key": &types.AttributeValueMemberS{Value: shardSortKey},
+	}
+
+	// Create transaction with shard version check and timer insertion
+	transactItems := []types.TransactWriteItem{
+		{
+			// Condition check: verify shard version matches
+			ConditionCheck: &types.ConditionCheck{
+				TableName:           aws.String(d.tableName),
+				Key:                 shardKey,
+				ConditionExpression: aws.String("shard_version = :expected_version"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":expected_version": &types.AttributeValueMemberN{Value: strconv.FormatInt(shardVersion, 10)},
+				},
+			},
+		},
+		{
+			// Put item: insert the timer
+			Put: &types.Put{
+				TableName: aws.String(d.tableName),
+				Item:      timerItem,
+			},
+		},
+	}
+
+	transactInput := &dynamodb.TransactWriteItemsInput{
+		TransactItems: transactItems,
+	}
+
+	_, transactErr := d.client.TransactWriteItems(ctx, transactInput)
+	if transactErr != nil {
+		if isConditionalCheckFailedException(transactErr) {
+			// Shard version mismatch - don't perform expensive read query as requested
+			// Just return a generic conflict error without specific version info
+			conflictInfo := &databases.ShardInfo{
+				ShardVersion: 0, // Unknown version to avoid expensive read
+			}
+			return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer creation", nil, conflictInfo)
+		}
+		return databases.NewGenericDbError("failed to execute atomic timer creation transaction", transactErr)
+	}
+
+	return nil
 }
 
-func (c *DynamoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+func (d *DynamoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
+	// Serialize payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON *string
+
+	if timer.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(timer.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadStr := string(payloadBytes)
+		payloadJSON = &payloadStr
+	}
+
+	if timer.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(timer.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyStr := string(retryPolicyBytes)
+		retryPolicyJSON = &retryPolicyStr
+	}
+
+	// Create timer sort key: TIMER#<namespace>#<timer_id>
+	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
+
+	// Create timer item
+	timerItem := map[string]types.AttributeValue{
+		"shard_id":                       &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+		"sort_key":                       &types.AttributeValueMemberS{Value: timerSortKey},
+		"row_type":                       &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeTimer))},
+		"timer_execute_at":               &types.AttributeValueMemberS{Value: timer.ExecuteAt.Format(time.RFC3339Nano)},
+		"timer_uuid":                     &types.AttributeValueMemberS{Value: databases.ZeroUUIDString}, // Placeholder UUID
+		"timer_id":                       &types.AttributeValueMemberS{Value: timer.Id},
+		"timer_namespace":                &types.AttributeValueMemberS{Value: timer.Namespace},
+		"timer_callback_url":             &types.AttributeValueMemberS{Value: timer.CallbackUrl},
+		"timer_callback_timeout_seconds": &types.AttributeValueMemberN{Value: strconv.Itoa(int(timer.CallbackTimeoutSeconds))},
+		"timer_created_at":               &types.AttributeValueMemberS{Value: timer.CreatedAt.Format(time.RFC3339Nano)},
+		"timer_attempts":                 &types.AttributeValueMemberN{Value: "0"},
+	}
+
+	if payloadJSON != nil {
+		timerItem["timer_payload"] = &types.AttributeValueMemberS{Value: *payloadJSON}
+	}
+
+	if retryPolicyJSON != nil {
+		timerItem["timer_retry_policy"] = &types.AttributeValueMemberS{Value: *retryPolicyJSON}
+	}
+
+	// Insert the timer directly without any locking or version checking
+	putItemInput := &dynamodb.PutItemInput{
+		TableName: aws.String(d.tableName),
+		Item:      timerItem,
+	}
+
+	_, putErr := d.client.PutItem(ctx, putItemInput)
+	if putErr != nil {
+		return databases.NewGenericDbError("failed to insert timer", putErr)
+	}
+
+	return nil
 }
 
 func (c *DynamoDBTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId int, namespace string, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
