@@ -126,8 +126,79 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 }
 
 func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+	// Generate UUID for the timer
+	timerUUID := gocql.TimeUUID()
+
+	// Serialize payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON string
+
+	if timer.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(timer.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadJSON = string(payloadBytes)
+	}
+
+	if timer.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(timer.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyJSON = string(retryPolicyBytes)
+	}
+
+	// Create a batch with both shard version check and timer insertion
+	batch := c.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
+
+	// Add shard version check to batch - update shard version to same value to verify it matches
+	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF shard_version = ?`
+	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, databases.ZeroUUID, shardVersion)
+
+	// Add timer insertion to batch
+	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	batch.Query(insertQuery,
+		shardId,
+		databases.RowTypeTimer,
+		timer.ExecuteAt,
+		timerUUID,
+		timer.Id,
+		timer.Namespace,
+		timer.CallbackUrl,
+		payloadJSON,
+		retryPolicyJSON,
+		timer.CallbackTimeoutSeconds,
+		timer.CreatedAt,
+		0, // timer_attempts starts at 0
+	)
+
+	// Execute the batch atomically
+	previous := make(map[string]interface{})
+	applied, iter, batchErr := c.session.MapExecuteBatchCAS(batch, previous)
+	if iter != nil {
+		iter.Close()
+	}
+
+	if batchErr != nil {
+		return databases.NewGenericDbError("failed to execute atomic timer creation batch", batchErr)
+	}
+
+	if !applied {
+		// Batch failed - check if it was due to shard version mismatch or shard not existing
+		var conflictShardVersion int64
+		if shardVersionValue, exists := previous["shard_version"]; exists && shardVersionValue != nil {
+			conflictShardVersion = shardVersionValue.(int64)
+			conflictInfo := &databases.ShardInfo{
+				ShardVersion: conflictShardVersion,
+			}
+			return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer creation", nil, conflictInfo)
+		} else {
+			// Shard doesn't exist
+			return databases.NewGenericDbError("shard record does not exist", nil)
+		}
+	}
+
+	return nil
 }
 
 func (c *CassandraTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {

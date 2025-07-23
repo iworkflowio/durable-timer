@@ -105,7 +105,7 @@ type (
 	}
 )
 
-func (d DbError) Error() string {
+func (d *DbError) Error() string {
 	return d.CustomMessage + "\n" + "Original error: " + d.OriginalError.Error()
 }
 
