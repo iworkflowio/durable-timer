@@ -12,6 +12,7 @@ info:
     - Configurable retry policies and timeouts
     - Timer modification and cancellation
     - Callback response can update timer schedule
+    - Namespace-based timer uniqueness 
     
   version: 1.0.0
   contact:
@@ -27,13 +28,15 @@ servers:
     description: Production server
 
 paths:
-  /timers:
+  /timers/{namespace}:
     post:
       summary: Create a new timer
       description: |
         Creates a new one-time timer that will execute an HTTP callback at the specified time.
-        Timer IDs are used for deduplication - creating a timer with an existing ID will return the existing timer.
+        Timer IDs are used for deduplication within the namespace 
       operationId: createTimer
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
       requestBody:
         required: true
         content:
@@ -55,7 +58,6 @@ paths:
                 summary: Timer with custom retry policy
                 value:
                   id: "payment-retry-456"
-                  groupId: "xlarge-scale-group"
                   executeAt: "2024-12-20T10:00:00Z"
                   callbackUrl: "https://payment.example.com/process"
                   payload:
@@ -79,13 +81,13 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
 
-  /timers/{groupId}/{timerId}:
+  /timers/{namespace}/{timerId}:
     get:
       summary: Get timer status and detailed information
       description: Query timer status and detailed information as specified in FR-1.5
       operationId: getTimer
       parameters:
-        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/Namespace'
         - $ref: '#/components/parameters/TimerId'
       responses:
         '200':
@@ -106,7 +108,7 @@ paths:
         Only pending timers can be updated.
       operationId: updateTimer
       parameters:
-        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/Namespace'
         - $ref: '#/components/parameters/TimerId'
       requestBody:
         required: true
@@ -147,7 +149,7 @@ paths:
         Once deleted, the timer will not execute its callback.
       operationId: deleteTimer
       parameters:
-        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/Namespace'
         - $ref: '#/components/parameters/TimerId'
       responses:
         '204':
@@ -163,18 +165,18 @@ components:
       name: timerId
       in: path
       required: true
-      description: Unique identifier for the timer
+      description: Unique identifier for the timer within the namespace
       schema:
         type: string
         example: "user-notification-123"
-    GroupId:
-      name: groupId
+    Namespace:
+      name: namespace
       in: path
       required: true
-      description: Group identifier for the timer. It is used for scalability. Must be one of the groupIds enabled in the system. Must be provided in read/write operation requests for lookup.
+      description: Namespace identifier for the timer. It is for timer ID uniqueness. Also used for scalability design(tied to the number of shards). Must be one of the namespaces configured in the system.
       schema:
         type: string
-        example: "xlarge-scale-group"
+        example: "example-namespace"
 
   schemas:
     CreateTimerRequest:
@@ -186,13 +188,9 @@ components:
       properties:
         id:
           type: string
-          description: Unique identifier for the timer (used for deduplication)
+          description: Unique identifier for the timer within the namespace (used for deduplication)
           example: "user-notification-123"
           maxLength: 255
-        groupId:
-          type: string
-          description: Group identifier for the timer. It is used for scalability. Must be one of the groupIds enabled in the system. Must be provided in read/write operation requests for lookup. If not provided, the timer will be created in the default group configured in the system.
-          example: "xlarge-scale-group"
         executeAt:
           type: string
           format: date-time
@@ -258,7 +256,7 @@ components:
       type: object
       required:
         - id
-        - groupId
+        - namespace
         - executeAt
         - callbackUrl
         - createdAt
@@ -266,12 +264,12 @@ components:
       properties:
         id:
           type: string
-          description: Unique identifier for the timer
+          description: Unique identifier for the timer within the namespace
           example: "user-notification-123"
-        groupId:
+        namespace:
           type: string
-          description: Group identifier for the timer. It is used for scalability. Must be one of the groupIds enabled in the system. Must be provided in read/write operation requests for lookup.
-          example: "xlarge-scale-group"
+          description: Namespace identifier for the timer. It is used for scalability and timer ID uniqueness.
+          example: "example-namespace"
         executeAt:
           type: string
           format: date-time

@@ -22,6 +22,11 @@ type (
 			ctx context.Context,
 			shardId int, shardVersion int64, timer *DbTimer,
 		) (err *DbError)
+		
+		CreateTimerNoLock(
+			ctx context.Context,
+			shardId int, shardVersion int64, timer *DbTimer,
+		) (err *DbError)
 
 		GetTimersUpToTimestamp(
 			ctx context.Context,
