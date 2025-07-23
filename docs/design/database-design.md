@@ -146,6 +146,50 @@ CREATE TABLE timers (
 CREATE INDEX idx_timer_lookup ON timers (shard_id, row_type, timer_namespace, timer_id) WHERE row_type = 2;
 ```
 
+## TimerUuid and Upsert Behavior
+
+### Stable UUID Requirement
+
+The `timer_uuid` field must be provided by callers and should be **stable** for the same timer (namespace + timer_id combination). This enables consistent upsert behavior across all database implementations.
+
+**UUID Generation Strategy**:
+```go
+// Example: Generate stable UUID from namespace and timer_id
+func generateTimerUUID(namespace, timerId string) string {
+    hash := md5.Sum([]byte(fmt.Sprintf("%s:%s", namespace, timerId)))
+    uuid, _ := gocql.UUIDFromBytes(hash[:])
+    return uuid.String()
+}
+```
+
+### Database-Specific Upsert Behavior
+
+| Database | Upsert Mechanism | Behavior |
+|----------|------------------|----------|
+| **MySQL** | `INSERT ... ON DUPLICATE KEY UPDATE` | True upsert - overwrites existing timer |
+| **PostgreSQL** | `INSERT ... ON CONFLICT DO UPDATE` | True upsert - overwrites existing timer |
+| **MongoDB** | `ReplaceOne` with `upsert: true` | True upsert - overwrites existing timer |
+| **DynamoDB** | `PutItem` (native behavior) | True upsert - overwrites existing timer |
+| **Cassandra** | `INSERT` (natural behavior) | **Partial upsert** - see limitation below |
+
+### Cassandra Limitation: Execute Time Clustering
+
+⚠️ **Important Limitation**: Cassandra allows multiple timer records with the same `timer_id` if they have different `timer_execute_at` values. This is due to the clustering key design that includes `timer_execute_at` for optimal batch read/delete performance.
+
+**Scenario**:
+```
+1. Create timer: namespace="alerts", timer_id="daily-report", execute_at="2025-01-01 09:00"
+2. Update timer: namespace="alerts", timer_id="daily-report", execute_at="2025-01-01 10:00"
+   → Result: Two separate records in Cassandra (different clustering key values)
+```
+
+**Design Trade-off**: This limitation is acceptable because:
+- Cassandra's clustering design provides significant performance benefits for batch timer operations
+- Timer updates with different execution times are less common than creation/deletion operations
+- The performance benefits for high-volume timer processing outweigh the upsert limitation
+- Other databases (MySQL, PostgreSQL, MongoDB, DynamoDB) provide true upsert behavior
+- User can still use DeleteTimer API to delete first, if duplicate is not desirable
+
 **Query Patterns**:
 ```sql
 -- Shard ownership operations (row_type = 1)
