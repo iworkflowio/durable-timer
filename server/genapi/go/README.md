@@ -10,6 +10,7 @@ at specified times with high reliability and scalability.
 - Configurable retry policies and timeouts
 - Timer modification and cancellation
 - Callback response can update timer schedule
+- Namespace-based timer uniqueness 
 
 
 ## Overview
@@ -23,7 +24,7 @@ To see how to make this your own, look here:
 [README](https://openapi-generator.tech)
 
 - API version: 1.0.0
-- Build date: 2025-07-21T15:02:21.613424-07:00[America/Los_Angeles]
+- Build date: 2025-07-23T12:42:54.088035-07:00[America/Los_Angeles]
 - Generator version: 7.14.0
 
 ### Running the server

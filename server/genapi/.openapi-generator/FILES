@@ -9,6 +9,7 @@ go/model_create_timer_request.go
 go/model_error.go
 go/model_retry_policy.go
 go/model_timer.go
+go/model_timer_selection.go
 go/model_update_timer_request.go
 go/routers.go
 main.go

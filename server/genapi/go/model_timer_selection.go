@@ -9,29 +9,11 @@
 
 package genapi
 
-import (
-	"time"
-)
-
-type UpdateTimerRequest struct {
+type TimerSelection struct {
 
 	// Namespace identifier for the timer. It is for timer ID uniqueness. Also used for scalability design(tied to the number of shards). Must be one of the namespaces configured in the system.
 	Namespace string `json:"namespace"`
 
 	// Unique identifier for the timer within the namespace
 	TimerId string `json:"timerId"`
-
-	// New execution time for the timer
-	ExecuteAt time.Time `json:"executeAt,omitempty"`
-
-	// New callback URL, returning 200 with CallbackResponse means success, otherwise will be retried.
-	CallbackUrl string `json:"callbackUrl,omitempty"`
-
-	// New payload data
-	Payload map[string]interface{} `json:"payload,omitempty"`
-
-	RetryPolicy RetryPolicy `json:"retryPolicy,omitempty"`
-
-	// New timeout for the HTTP callback in seconds
-	CallbackTimeoutSeconds int32 `json:"callbackTimeoutSeconds,omitempty"`
 }
