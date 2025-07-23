@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gocql/gocql"
 	"github.com/iworkflowio/durable-timer/config"
 	"github.com/iworkflowio/durable-timer/databases"
 	"github.com/lib/pq"
@@ -167,14 +168,130 @@ func isDuplicateKeyError(err error) bool {
 	return ok && pqErr.Code == "23505"
 }
 
-func (c *PostgreSQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+func (p *PostgreSQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
+	// Serialize payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON interface{}
+
+	if timer.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(timer.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadJSON = string(payloadBytes)
+	}
+
+	if timer.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(timer.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyJSON = string(retryPolicyBytes)
+	}
+
+	// Use PostgreSQL transaction to atomically check shard version and insert timer
+	tx, txErr := p.db.BeginTx(ctx, nil)
+	if txErr != nil {
+		return databases.NewGenericDbError("failed to start PostgreSQL transaction", txErr)
+	}
+	defer tx.Rollback() // Will be no-op if transaction is committed
+
+	// Read the shard to get current version within the transaction
+	var actualShardVersion int64
+	shardQuery := `SELECT shard_version FROM timers 
+	               WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid = $4`
+
+	shardErr := tx.QueryRowContext(ctx, shardQuery, shardId, databases.RowTypeShard,
+		databases.ZeroTimestamp, databases.ZeroUUIDString).Scan(&actualShardVersion)
+
+	if shardErr != nil {
+		if errors.Is(shardErr, sql.ErrNoRows) {
+			// Shard doesn't exist
+			conflictInfo := &databases.ShardInfo{
+				ShardVersion: 0,
+			}
+			return databases.NewDbErrorOnShardConditionFail("shard not found during timer creation", nil, conflictInfo)
+		}
+		return databases.NewGenericDbError("failed to read shard", shardErr)
+	}
+
+	// Compare shard versions
+	if actualShardVersion != shardVersion {
+		// Version mismatch
+		conflictInfo := &databases.ShardInfo{
+			ShardVersion: actualShardVersion,
+		}
+		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer creation", nil, conflictInfo)
+	}
+
+	// Generate unique UUID for the timer
+	timerUUID := gocql.TimeUUID()
+
+	// Shard version matches, proceed to insert timer within the transaction
+	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
+	                                   timer_id, timer_namespace, timer_callback_url, 
+	                                   timer_payload, timer_retry_policy, timer_callback_timeout_seconds,
+	                                   timer_created_at, timer_attempts) 
+	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+
+	_, insertErr := tx.ExecContext(ctx, insertQuery,
+		shardId, databases.RowTypeTimer, timer.ExecuteAt, timerUUID.String(),
+		timer.Id, timer.Namespace, timer.CallbackUrl,
+		payloadJSON, retryPolicyJSON, timer.CallbackTimeoutSeconds,
+		timer.CreatedAt, 0)
+
+	if insertErr != nil {
+		return databases.NewGenericDbError("failed to insert timer", insertErr)
+	}
+
+	// Commit the transaction
+	if commitErr := tx.Commit(); commitErr != nil {
+		return databases.NewGenericDbError("failed to commit transaction", commitErr)
+	}
+
+	return nil
 }
 
-func (c *PostgreSQLTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+func (p *PostgreSQLTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
+	// Serialize payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON interface{}
+
+	if timer.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(timer.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadJSON = string(payloadBytes)
+	}
+
+	if timer.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(timer.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyJSON = string(retryPolicyBytes)
+	}
+
+	// Generate unique UUID for the timer
+	timerUUID := gocql.TimeUUID()
+
+	// Insert the timer directly without any locking or version checking
+	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
+	                                   timer_id, timer_namespace, timer_callback_url, 
+	                                   timer_payload, timer_retry_policy, timer_callback_timeout_seconds,
+	                                   timer_created_at, timer_attempts) 
+	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+
+	_, insertErr := p.db.ExecContext(ctx, insertQuery,
+		shardId, databases.RowTypeTimer, timer.ExecuteAt, timerUUID.String(),
+		timer.Id, timer.Namespace, timer.CallbackUrl,
+		payloadJSON, retryPolicyJSON, timer.CallbackTimeoutSeconds,
+		timer.CreatedAt, 0)
+
+	if insertErr != nil {
+		return databases.NewGenericDbError("failed to insert timer", insertErr)
+	}
+
+	return nil
 }
 
 func (c *PostgreSQLTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId int, namespace string, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
