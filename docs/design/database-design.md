@@ -10,29 +10,29 @@ This document describes the database design for the Distributed Durable Timer Se
 ### Shard ID Calculation
 
 ```
-shardId = hash(timerId) % group.numShards
+shardId = hash(timerId) % namespace.numShards
 ```
 
 **Implementation Steps**:
-1. Client provides `groupId` and `timerId`
-2. System looks up `numShards` configuration for the group
+1. Client provides `namespace` and `timerId`
+2. System looks up `numShards` configuration for the namespace
 3. Hash `timerId` using consistent hash function (e.g., CRC32, SHA1)
 4. Apply modulo operation: `shardId = hash(timerId) % numShards`
 5. Use `shardId` as partition key for database operations
 
 **Example**:
 ```
-groupId: "notifications"  (configured with numShards: 1024)
+namespace: "user-services"  (configured with numShards: 1024)
 timerId: "user-reminder-123"
 hash("user-reminder-123") = 0x7B2C4A1E = 2067390238
 shardId = 2067390238 % 1024 = 286
 ```
 
-### Group Configuration
+### Namespace Configuration
 
-Groups support different scale requirements:
+Namespaces support different scale requirements:
 
-| Group Type | Use Case | numShards | Expected Load |
+| Namespace Type | Use Case | numShards | Expected Load |
 |------------|----------|-----------|---------------|
 | small | Development/Testing | 16 | < 10K timers |
 | medium | Standard Production | 256 | < 1M timers |
@@ -41,23 +41,32 @@ Groups support different scale requirements:
 
 
 
-#### Group-Based Partitioning Trade-offs
+#### Namespace-Based Partitioning Trade-offs
 
-**Cons: API Complexity**
-- **Exposed Abstraction**: Users must understand and provide `groupId` for timer operations
-- **API Surface**: Get, update, and delete operations require both `groupId` and `timerId` parameters
-- **Learning Curve**: Additional concept for users to understand beyond simple timer IDs
+**Design Constraint: Fixed numShards per Namespace**
+- **Immutable Configuration**: Once a namespace is created with a specific `numShards` value, it cannot be changed
+- **Lookup Dependency**: Timer lookups depend on `hash(timerId) % numShards` - changing numShards would make existing timers unfindable
+- **Comparison to Other Systems**: Unlike systems like Uber Cadence where `numShards` is globally fixed for the entire cluster, our approach allows different namespaces to have different shard counts
 
-**Pros: Operational Simplicity**  
-- **No Complex Resharding**: Avoids building sophisticated data migration mechanisms when changing `numShards` configuration
-- **Predictable Performance**: Shard assignment is deterministic and doesn't require cluster-wide coordination
-- **Simpler Implementation**: No need for complex resharding algorithms, data movement, or consistency guarantees during resharding operations
+**Pros: Flexible Scaling Model**  
+- **Namespace-Level Flexibility**: New namespaces can be created with appropriate shard counts based on expected load
+- **Workload Isolation**: Different use cases can use namespaces with different scale characteristics (e.g., dev: 16 shards, production: 1024 shards)
+- **No Global Resharding**: Avoids cluster-wide resharding operations that affect all workloads simultaneously
+- **Predictable Performance**: Shard assignment is deterministic within each namespace
+- **Simple Implementation**: No complex data migration or resharding algorithms needed
+
+**Cons: Namespace Management Overhead**
+- **Planning Required**: Must estimate shard requirements when creating namespaces
+- **API Complexity**: Users must understand and provide `namespace` for all timer operations
+- **Immutable Scaling**: Cannot increase shard count for existing namespaces with high load
 
 **Impact Assessment**
-- **Limited API Impact**: Only 3 of 4 API endpoints require `groupId` (create timer uses it implicitly for shard assignment)
-- **Better Than Alternatives**: Exposing `groupId` is preferable to exposing raw `shardId` or requiring complex client-side shard computation
-- **Operational Benefits**: The operational simplicity of avoiding resharding outweighs the minor API complexity increase
-- **Future Flexibility**: Groups can be pre-allocated with appropriate shard counts based on expected load, reducing the need for runtime resharding
+- **Superior to Global Fixed Sharding**: More flexible than systems where shard count is fixed cluster-wide
+- **Better Than Dynamic Resharding**: Avoids complexity of live data migration and consistency challenges
+- **Operational Benefits**: Predictable performance characteristics and no resharding downtime
+- **Trade-off Justification**: Namespace planning overhead is preferable to complex resharding infrastructure
+
+
 
 
 
@@ -116,7 +125,7 @@ CREATE TABLE timers (
     
     -- Timer-specific fields (row_type = 2)
     timer_id            VARCHAR(255),              -- Business identifier
-    timer_group_id      VARCHAR(255),              -- Group identifier  
+    timer_namespace     VARCHAR(255),              -- Namespace identifier  
     timer_callback_url  VARCHAR(2048),             -- HTTP callback URL
     timer_payload       JSON,                      -- Custom payload data
     timer_retry_policy  JSON,                      -- Retry configuration
@@ -134,7 +143,7 @@ CREATE TABLE timers (
 ) PARTITION BY HASH(shard_id);
 
 -- Indexes for efficient lookups
-CREATE INDEX idx_timer_lookup ON timers (shard_id, row_type, timer_id) WHERE row_type = 2;
+CREATE INDEX idx_timer_lookup ON timers (shard_id, row_type, timer_namespace, timer_id) WHERE row_type = 2;
 ```
 
 **Query Patterns**:
@@ -144,12 +153,12 @@ SELECT shard_version, shard_owner_id, shard_claimed_at, shard_metadata
 FROM timers WHERE shard_id = ? AND row_type = 1;
 
 -- Timer execution query (row_type = 2, high frequency)
-SELECT timer_id, timer_group_id, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
+SELECT timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
 FROM timers WHERE shard_id = ? AND row_type = 2 AND timer_execute_at <= ?
 ORDER BY timer_execute_at ASC;
 
 -- Timer CRUD operations (row_type = 2, lower frequency)  
-SELECT * FROM timers WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
+SELECT * FROM timers WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ? AND timer_id = ?;
 ```
 
 ## Database-Specific Implementations
@@ -166,7 +175,7 @@ CREATE TABLE timers (
     
     -- Timer-specific fields (row_type = 2)
     timer_id text,
-    timer_group_id text,
+    timer_namespace text,
     timer_callback_url text,
     timer_payload text,          -- JSON serialized
     timer_retry_policy text,     -- JSON serialized
@@ -184,8 +193,8 @@ CREATE TABLE timers (
     PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid)
 ) WITH CLUSTERING ORDER BY (row_type ASC, timer_execute_at ASC, timer_uuid ASC);
 
--- Index for timer lookups by timer_id
-CREATE INDEX idx_timer_id ON timers (timer_id);
+-- Index for timer lookups by namespace and timer_id
+CREATE INDEX idx_timer_namespace_id ON timers (timer_namespace, timer_id);
 ```
 
 **Query Patterns**:
@@ -200,13 +209,13 @@ WHERE shard_id = ? AND row_type = 1 IF shard_version = ?;
 
 -- Timer execution query (row_type = 2, leverages clustering)
 -- HIGH FREQUENCY: Executed every few seconds per shard
-SELECT timer_id, timer_group_id, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
+SELECT timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
 FROM timers WHERE shard_id = ? AND row_type = 2 AND timer_execute_at <= ?
 ORDER BY timer_execute_at ASC;
 
 -- Direct timer lookup (uses secondary index)
 -- LOWER FREQUENCY: User-driven CRUD operations  
-SELECT * FROM timers WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
+SELECT * FROM timers WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ? AND timer_id = ?;
 ```
 
 
@@ -220,40 +229,40 @@ SELECT * FROM timers WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
 // Timer record (rowType = 2)
 {
   _id: ObjectId(),
-  shardId: NumberInt(286),
-  rowType: NumberInt(2),           // 2 = timer record
-  timerExecuteAt: ISODate("2024-12-20T15:30:00Z"),
-  timerUuid: UUID("550e8400-e29b-41d4-a716-446655440000"),
+  shard_id: NumberInt(286),
+  row_type: NumberInt(2),           // 2 = timer record
+  timer_execute_at: ISODate("2024-12-20T15:30:00Z"),
+  timer_uuid: UUID("550e8400-e29b-41d4-a716-446655440000"),
   
   // Timer-specific fields
-  timerId: "user-reminder-123", 
-  timerGroupId: "notifications",
-  timerCallbackUrl: "https://api.example.com/webhook",
-  timerPayload: {
+  timer_id: "user-reminder-123", 
+  timer_namespace: "user-services",
+  timer_callback_url: "https://api.example.com/webhook",
+  timer_payload: {
     userId: "user123",
     action: "send_reminder"
   },
-  timerRetryPolicy: {
+  timer_retry_policy: {
     maxRetries: 3,
     initialInterval: "30s"
   },
-  timerCallbackTimeoutSeconds: 30,
+  timer_callback_timeout_seconds: 30,
 
-  timerCreatedAt: ISODate("2024-12-19T10:00:00Z"),
-  timerAttempts: NumberInt(0)
+  timer_created_at: ISODate("2024-12-19T10:00:00Z"),
+  timer_attempts: NumberInt(0)
 }
 
 // Shard ownership record (rowType = 1)
 {
   _id: ObjectId(),
-  shardId: NumberInt(286),
-  rowType: NumberInt(1),           // 1 = shard ownership record
+  shard_id: NumberInt(286),
+  row_type: NumberInt(1),           // 1 = shard ownership record
   
   // Shard-specific fields  
-  shardVersion: NumberLong(42),
-  shardOwnerId: "instance-uuid-1234",
-  shardClaimedAt: ISODate("2024-12-19T10:00:00Z"),
-  shardMetadata: {
+  shard_version: NumberLong(42),
+  shard_owner_id: "instance-uuid-1234",
+  shard_claimed_at: ISODate("2024-12-19T10:00:00Z"),
+  shard_metadata: {
     processId: 12345,
     serviceVersion: "1.0.0",
     nodeId: "node-001"
@@ -266,14 +275,14 @@ SELECT * FROM timers WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
 // Enable sharding on database
 sh.enableSharding("timerservice")
 
-// Shard collection on shardId  
-sh.shardCollection("timerservice.timers", {shardId: 1})
+// Shard collection on shard_id  
+sh.shardCollection("timerservice.timers", {shard_id: 1})
 
 // Compound index optimized for timer execution queries
-db.timers.createIndex({shardId: 1, rowType: 1, timerExecuteAt: 1, timerUuid: 1})
+db.timers.createIndex({shard_id: 1, row_type: 1, timer_execute_at: 1, timer_uuid: 1})
 
 // Index for timer CRUD operations
-db.timers.createIndex({shardId: 1, rowType: 1, timerId: 1}, {
+db.timers.createIndex({shard_id: 1, row_type: 1, timer_namespace: 1, timer_id: 1}, {
   unique: true
 })
 
@@ -281,47 +290,48 @@ db.timers.createIndex({shardId: 1, rowType: 1, timerId: 1}, {
 
 **Query Patterns**:
 ```javascript
-// Shard ownership claim (rowType = 1)
+// Shard ownership claim (row_type = 1)
 // MEDIUM FREQUENCY: Ownership changes during failover
 db.timers.findOne({
-  shardId: 286,
-  rowType: 1
+  shard_id: 286,
+  row_type: 1
 }, {
-  shardVersion: 1,
-  shardOwnerId: 1, 
-  shardClaimedAt: 1,
-  shardMetadata: 1
+  shard_version: 1,
+  shard_owner_id: 1, 
+  shard_claimed_at: 1,
+  shard_metadata: 1
 })
 
 // Update shard ownership (atomic operation with version check)
 db.timers.updateOne({
-  shardId: 286,
-  rowType: 1,
-  shardVersion: 42  // Current version for optimistic concurrency
+  shard_id: 286,
+  row_type: 1,
+  shard_version: 42  // Current version for optimistic concurrency
 }, {
   $set: {
-    shardVersion: 43,
-    shardOwnerId: "new-instance-uuid",
-    shardClaimedAt: new Date(),
-    shardMetadata: {...},
-    updatedAt: new Date()
+    shard_version: 43,
+    shard_owner_id: "new-instance-uuid",
+    shard_claimed_at: new Date(),
+    shard_metadata: {...},
+    updated_at: new Date()
   }
 })
 
-// Timer execution query (rowType = 2, optimized - uses compound index)
+// Timer execution query (row_type = 2, optimized - uses compound index)
 // HIGH FREQUENCY: Executed every few seconds per shard  
 db.timers.find({
-  shardId: 286,
-  rowType: 2,
-  timerExecuteAt: {$lte: new Date()}
-}).sort({timerExecuteAt: 1})
+  shard_id: 286,
+  row_type: 2,
+  timer_execute_at: {$lte: new Date()}
+}).sort({timer_execute_at: 1})
 
 // Direct timer lookup (uses partial index)
 // LOWER FREQUENCY: User-driven CRUD operations
 db.timers.findOne({
-  shardId: 286,
-  rowType: 2,
-  timerId: "user-reminder-123"  
+  shard_id: 286,
+  row_type: 2,
+  timer_namespace: "user-services",
+  timer_id: "user-reminder-123"  
 })
 ```
 
@@ -337,7 +347,7 @@ CREATE TABLE timers (
     
     -- Timer-specific fields (row_type = 2)
     timer_id VARCHAR(255),
-    timer_group_id VARCHAR(255),
+    timer_namespace VARCHAR(255),
     timer_callback_url VARCHAR(2048),
     timer_payload JSON,
     timer_retry_policy JSON,
@@ -352,7 +362,7 @@ CREATE TABLE timers (
     shard_metadata JSON,
     
     PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid) CLUSTERED,
-    UNIQUE KEY idx_timer_lookup (shard_id, row_type, timer_id)
+    UNIQUE KEY idx_timer_lookup (shard_id, row_type, timer_namespace, timer_id)
 ) PARTITION BY HASH(shard_id) PARTITIONS 1024;
 ```
 
@@ -371,7 +381,7 @@ WHERE shard_id = ? AND row_type = 1 AND shard_version = ?;
 
 -- Timer execution query (row_type = 2, optimized - uses clustered primary key)
 -- HIGH FREQUENCY: Executed every few seconds per shard
-SELECT timer_id, timer_group_id, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
+SELECT timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
 FROM timers 
 WHERE shard_id = ? AND row_type = 2 AND timer_execute_at <= NOW()
 ORDER BY timer_execute_at ASC, timer_uuid ASC
@@ -380,7 +390,7 @@ LIMIT 1000;
 -- Direct timer lookup (uses unique secondary index)
 -- LOWER FREQUENCY: User-driven CRUD operations
 SELECT * FROM timers 
-WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
+WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ? AND timer_id = ?;
 ```
 
 ### DynamoDB
@@ -391,7 +401,7 @@ WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
   "TableName": "timers",
   "KeySchema": [
     {
-      "AttributeName": "shardId",
+      "AttributeName": "shard_id",
       "KeyType": "HASH"
     },
     {
@@ -401,7 +411,7 @@ WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
   ],
   "AttributeDefinitions": [
     {
-      "AttributeName": "shardId",
+      "AttributeName": "shard_id",
       "AttributeType": "N"
     },
     {
@@ -409,20 +419,20 @@ WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
       "AttributeType": "S"
     },
     {
-      "AttributeName": "timerExecuteAt",
+      "AttributeName": "timer_execute_at",
       "AttributeType": "S"
     }
   ],
   "LocalSecondaryIndexes": [
     {
-      "IndexName": "timerExecuteAt-index",
+      "IndexName": "timer_execute_at-index",
       "KeySchema": [
         {
-          "AttributeName": "shardId",
+          "AttributeName": "shard_id",
           "KeyType": "HASH"
         },
         {
-          "AttributeName": "timerExecuteAt",
+          "AttributeName": "timer_execute_at",
           "KeyType": "RANGE"
         }
       ]
@@ -433,49 +443,49 @@ WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
 
 **Item Structure**:
 ```json
-// Timer record (rowType = TIMER)
+// Timer record (row_type = TIMER)
 {
-  "shardId": {"N": "286"},
-  "sortKey": {"S": "TIMER#user-reminder-123"},  // Composite sort key for timers
-  "rowType": {"S": "TIMER"},
-  "timerExecuteAt": {"S": "2024-12-20T15:30:00Z"},
-  "timerUuid": {"S": "550e8400-e29b-41d4-a716-446655440000"},
+  "shard_id": {"N": "286"},
+  "sortKey": {"S": "TIMER#user-services#user-reminder-123"},  // Composite sort key for timers
+  "row_type": {"S": "TIMER"},
+  "timer_execute_at": {"S": "2024-12-20T15:30:00Z"},
+  "timer_uuid": {"S": "550e8400-e29b-41d4-a716-446655440000"},
   
   // Timer-specific fields
-  "timerId": {"S": "user-reminder-123"},
-  "timerGroupId": {"S": "notifications"},
-  "timerCallbackUrl": {"S": "https://api.example.com/webhook"},
-  "timerPayload": {"S": "{\"userId\":\"user123\"}"},
-  "timerRetryPolicy": {"S": "{\"maxRetries\":3}"},
-  "timerCallbackTimeoutSeconds": {"N": "30"},
-  "timerCreatedAt": {"S": "2024-12-19T10:00:00Z"},
-  "timerAttempts": {"N": "0"}
+  "timer_id": {"S": "user-reminder-123"},
+  "timer_namespace": {"S": "user-services"},
+  "timer_callback_url": {"S": "https://api.example.com/webhook"},
+  "timer_payload": {"S": "{\"userId\":\"user123\"}"},
+  "timer_retry_policy": {"S": "{\"maxRetries\":3}"},
+  "timer_callback_timeout_seconds": {"N": "30"},
+  "timer_created_at": {"S": "2024-12-19T10:00:00Z"},
+  "timer_attempts": {"N": "0"}
 }
 
-// Shard ownership record (rowType = SHARD)
+// Shard ownership record (row_type = SHARD)
 {
-  "shardId": {"N": "286"},
+  "shard_id": {"N": "286"},
   "sortKey": {"S": "SHARD#OWNERSHIP"},  // Fixed sort key for shard records
-  "rowType": {"S": "SHARD"},
+  "row_type": {"S": "SHARD"},
   
   // Shard-specific fields
-  "shardVersion": {"N": "42"},
-  "shardOwnerId": {"S": "instance-uuid-1234"},
-  "shardClaimedAt": {"S": "2024-12-19T10:00:00Z"},
-  "shardMetadata": {"S": "{\"processId\":12345,\"serviceVersion\":\"1.0.0\"}"},
+  "shard_version": {"N": "42"},
+  "shard_owner_id": {"S": "instance-uuid-1234"},
+  "shard_claimed_at": {"S": "2024-12-19T10:00:00Z"},
+  "shard_metadata": {"S": "{\"processId\":12345,\"serviceVersion\":\"1.0.0\"}"},
 
 }
 ```
 
 **Query Patterns**:
 ```javascript
-// Shard ownership claim (rowType = SHARD)
+// Shard ownership claim (row_type = SHARD)
 // MEDIUM FREQUENCY: Ownership changes during failover
 {
   TableName: "timers",
-  KeyConditionExpression: "shardId = :shardId AND sortKey = :sortKey",
+  KeyConditionExpression: "shard_id = :shard_id AND sortKey = :sortKey",
   ExpressionAttributeValues: {
-    ":shardId": {"N": "286"},
+    ":shard_id": {"N": "286"},
     ":sortKey": {"S": "SHARD#OWNERSHIP"}
   }
 }
@@ -484,11 +494,11 @@ WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
 {
   TableName: "timers",
   Key: {
-    "shardId": {"N": "286"},
+    "shard_id": {"N": "286"},
     "sortKey": {"S": "SHARD#OWNERSHIP"}
   },
-  UpdateExpression: "SET shardVersion = :newVersion, shardOwnerId = :ownerId, shardClaimedAt = :claimedAt, shardMetadata = :metadata, updatedAt = :now",
-  ConditionExpression: "shardVersion = :currentVersion",
+  UpdateExpression: "SET shard_version = :newVersion, shard_owner_id = :ownerId, shard_claimed_at = :claimedAt, shard_metadata = :metadata, updated_at = :now",
+  ConditionExpression: "shard_version = :currentVersion",
   ExpressionAttributeValues: {
     ":newVersion": {"N": "43"},
     ":currentVersion": {"N": "42"},
@@ -499,17 +509,17 @@ WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
   }
 }
 
-// Timer execution query (uses LSI on timerExecuteAt, filters by rowType)
+// Timer execution query (uses LSI on timer_execute_at, filters by row_type)
 // HIGH FREQUENCY: Executed every few seconds per shard
 {
   TableName: "timers",
-  IndexName: "timerExecuteAt-index",
-  KeyConditionExpression: "shardId = :shardId AND timerExecuteAt <= :now",
-  FilterExpression: "rowType = :rowType",
+  IndexName: "timer_execute_at-index",
+  KeyConditionExpression: "shard_id = :shard_id AND timer_execute_at <= :now",
+  FilterExpression: "row_type = :row_type",
   ExpressionAttributeValues: {
-    ":shardId": {"N": "286"},
+    ":shard_id": {"N": "286"},
     ":now": {"S": "2024-12-20T15:30:00Z"},
-    ":rowType": {"S": "TIMER"}
+    ":row_type": {"S": "TIMER"}
   }
 }
 
@@ -517,10 +527,10 @@ WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
 // LOWER FREQUENCY: User-driven CRUD operations
 {
   TableName: "timers",
-  KeyConditionExpression: "shardId = :shardId AND sortKey = :sortKey",
+  KeyConditionExpression: "shard_id = :shard_id AND sortKey = :sortKey",
   ExpressionAttributeValues: {
-    ":shardId": {"N": "286"},
-    ":sortKey": {"S": "TIMER#user-reminder-123"}
+    ":shard_id": {"N": "286"},
+    ":sortKey": {"S": "TIMER#user-services#user-reminder-123"}
   }
 }
 ```
@@ -530,7 +540,7 @@ WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
 - **LSI (Local Secondary Index)**: Storage for LSI is billed at the same rate as the base table, and write costs are included in the base table's write capacity. LSI has a strict 10GB storage limit per partition, but this is manageable through proper shard management. LSI queries are always strongly consistent and operate within the same partition as the base table.
 - **GSI (Global Secondary Index)**: GSI storage is billed separately from the base table, and you pay for both read and write capacity (or on-demand) on the GSI in addition to the base table. GSI does **not** have the 10GB per-partition limit—storage is effectively unlimited and scales independently.
 - **Cost Comparison**: LSI is significantly more cost-effective for write-heavy workloads since writes don't consume additional capacity. GSI incurs additional costs for every write operation that affects the index.
-- **Design Choice**: We use LSI for timer execution queries (by executeAt) to minimize costs while using the composite sort key for direct CRUD operations (by timerId). The unified table design keeps all shard and timer data in the same partition, improving data locality and transaction performance. The 10GB partition limit is managed through administrative controls - when a partition approaches the limit, system administrators can create new groups with higher shard counts to redistribute the load.
+- **Design Choice**: We use LSI for timer execution queries (by executeAt) to minimize costs while using the composite sort key for direct CRUD operations (by namespace and timerId). The unified table design keeps all shard and timer data in the same partition, improving data locality and transaction performance. The 10GB partition limit is managed through administrative controls - when a partition approaches the limit, system administrators can create new namespaces with higher shard counts to redistribute the load.
 
 ## Traditional SQL Databases
 
@@ -548,7 +558,7 @@ CREATE TABLE timers (
     
     -- Timer-specific fields (row_type = 2)
     timer_id VARCHAR(255),
-    timer_group_id VARCHAR(255),
+    timer_namespace VARCHAR(255),
     timer_callback_url VARCHAR(2048),
     timer_payload JSON,
     timer_retry_policy JSON,
@@ -563,7 +573,7 @@ CREATE TABLE timers (
     shard_metadata JSON,
     
     PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid),  -- Clustered by default in MySQL
-    UNIQUE INDEX idx_timer_lookup (shard_id, row_type, timer_id)
+    UNIQUE INDEX idx_timer_lookup (shard_id, row_type, timer_namespace, timer_id)
 ) PARTITION BY HASH(shard_id) PARTITIONS 32;
 ```
 
@@ -581,7 +591,7 @@ WHERE shard_id = ? AND row_type = 1 AND shard_version = ?;
 
 -- Timer execution query (row_type = 2, optimized - uses clustered primary key)
 -- HIGH FREQUENCY: Executed every few seconds per shard
-SELECT timer_id, timer_group_id, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
+SELECT timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
 FROM timers 
 WHERE shard_id = ? AND row_type = 2 AND timer_execute_at <= NOW(3)
 ORDER BY timer_execute_at ASC, timer_uuid ASC
@@ -590,7 +600,7 @@ LIMIT 1000;
 -- Direct timer lookup (uses unique secondary index)
 -- LOWER FREQUENCY: User-driven CRUD operations
 SELECT * FROM timers 
-WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
+WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ? AND timer_id = ?;
 ```
 
 ### PostgreSQL
@@ -605,7 +615,7 @@ CREATE TABLE timers (
     
     -- Timer-specific fields (row_type = 2)
     timer_id VARCHAR(255),
-    timer_group_id VARCHAR(255),
+    timer_namespace VARCHAR(255),
     timer_callback_url VARCHAR(2048),
     timer_payload JSONB,
     timer_retry_policy JSONB,
@@ -627,7 +637,7 @@ CREATE TABLE timers (
 -- ... repeat for p1 through p31
 
 -- Unique index for timer lookups
-CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, row_type, timer_id);
+CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, row_type, timer_namespace, timer_id);
 
 -- Cluster table by primary key for better physical ordering
 CLUSTER timers USING timers_pkey;
@@ -648,7 +658,7 @@ WHERE shard_id = ? AND row_type = 1 AND shard_version = ?;
 
 -- Timer execution query (row_type = 2, partition-aware)
 -- HIGH FREQUENCY: Executed every few seconds per shard
-SELECT timer_id, timer_group_id, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
+SELECT timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
 FROM timers 
 WHERE shard_id = ? AND row_type = 2 AND timer_execute_at <= NOW()
 ORDER BY timer_execute_at ASC
@@ -657,7 +667,7 @@ LIMIT 1000;
 -- Direct timer lookup (uses unique index)
 -- LOWER FREQUENCY: User-driven CRUD operations
 SELECT * FROM timers 
-WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
+WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ? AND timer_id = ?;
 ```
 
 ### Oracle Database
@@ -672,7 +682,7 @@ CREATE TABLE timers (
     
     -- Timer-specific fields (row_type = 2)
     timer_id VARCHAR2(255),
-    timer_group_id VARCHAR2(255),
+    timer_namespace VARCHAR2(255),
     timer_callback_url VARCHAR2(2048),
     timer_payload CLOB CHECK (timer_payload IS JSON),
     timer_retry_policy CLOB CHECK (timer_retry_policy IS JSON),
@@ -692,7 +702,7 @@ ORGANIZATION INDEX                    -- Index Organized Table for clustering
 PARTITION BY HASH (shard_id) PARTITIONS 32;
 
 -- Unique index for timer lookups
-CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, row_type, timer_id);
+CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, row_type, timer_namespace, timer_id);
 ```
 
 
@@ -710,7 +720,7 @@ WHERE shard_id = ? AND row_type = 1 AND shard_version = ?;
 
 -- Timer execution query (row_type = 2, partition pruning)
 -- HIGH FREQUENCY: Executed every few seconds per shard
-SELECT timer_id, timer_group_id, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
+SELECT timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
 FROM timers 
 WHERE shard_id = ? AND row_type = 2 AND timer_execute_at <= CURRENT_TIMESTAMP
 ORDER BY timer_execute_at ASC
@@ -719,7 +729,7 @@ FETCH FIRST 1000 ROWS ONLY;
 -- Direct timer lookup (partition + index access)
 -- LOWER FREQUENCY: User-driven CRUD operations
 SELECT * FROM timers 
-WHERE shard_id = ? AND row_type = 2 AND timer_id = ?;
+WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ? AND timer_id = ?;
 ```
 
 ### Microsoft SQL Server
@@ -734,7 +744,7 @@ CREATE TABLE timers (
     
     -- Timer-specific fields (row_type = 2)
     timer_id NVARCHAR(255),
-    timer_group_id NVARCHAR(255),
+    timer_namespace NVARCHAR(255),
     timer_callback_url NVARCHAR(2048),
     timer_payload NVARCHAR(MAX) CHECK (ISJSON(timer_payload) = 1),
     timer_retry_policy NVARCHAR(MAX) CHECK (ISJSON(timer_retry_policy) = 1),
@@ -771,7 +781,7 @@ AS PARTITION pf_shard_id TO ([PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
 -- CREATE TABLE timers (...) ON ps_shard_id(shard_id);
 
 -- Unique index for timer lookups  
-CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, row_type, timer_id);
+CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, row_type, timer_namespace, timer_id);
 AS RANGE LEFT FOR VALUES (0, 1, 2, 3, 4, 5, 6, 7);
 
 CREATE PARTITION SCHEME ps_shards_id
@@ -784,7 +794,7 @@ AS PARTITION pf_shards_id TO ([PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
 ```sql
 -- Timer execution query (partition elimination)
 -- HIGH FREQUENCY: Executed every few seconds per shard
-SELECT TOP 1000 timer_id, callback_url, payload, retry_policy
+SELECT TOP 1000 timer_id, timer_namespace, callback_url, payload, retry_policy
 FROM timers 
 WHERE shard_id = 286 AND execute_at <= GETUTCDATE()
 ORDER BY execute_at ASC;
@@ -792,7 +802,7 @@ ORDER BY execute_at ASC;
 -- Direct timer lookup (partition + index seek)
 -- LOWER FREQUENCY: User-driven CRUD operations
 SELECT * FROM timers 
-WHERE shard_id = 286 AND timer_id = 'user-reminder-123';
+WHERE shard_id = 286 AND timer_namespace = 'user-services' AND timer_id = 'user-reminder-123';
 ```
 
 
