@@ -1,0 +1,240 @@
+version: '3.8'
+
+services:
+  # Cassandra Database
+  cassandra:
+    image: cassandra:5
+    container_name: timer-cassandra
+    hostname: cassandra
+    environment:
+      - CASSANDRA_CLUSTER_NAME=timer_cluster
+      - CASSANDRA_DATACENTER=datacenter1
+      - CASSANDRA_RACK=rack1
+      - CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch
+      - CASSANDRA_NUM_TOKENS=256
+      - HEAP_NEWSIZE=128M
+      - MAX_HEAP_SIZE=1024M
+      - CASSANDRA_SEEDS=cassandra
+      - CASSANDRA_USERNAME=cassandra
+      - CASSANDRA_PASSWORD=cassandra
+    ports:
+      - "9042:9042"   # CQL native transport
+    networks:
+      - timer-network
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe keyspaces'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Cassandra Initialization, use the init script to create the keyspace and tables
+  cassandra-init:
+    image: cassandra:5 # use the same image as cassandra, so that the init script is compatible
+    container_name: cassandra-init
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    volumes:
+      - ./scripts/cassandra-init.cql:/init.cql:ro
+      - ../server/databases/cassandra/schema/v1.cql:/v1-schema.cql:ro
+    networks:
+      - timer-network
+    entrypoint: |
+      bash -c "
+        echo 'Waiting for Cassandra to be ready...'
+        until cqlsh cassandra -e 'describe keyspaces' > /dev/null 2>&1; do
+          echo 'Cassandra not ready yet, waiting...'
+          sleep 2
+        done
+        echo 'Cassandra is ready, executing initialization script...'
+        cqlsh cassandra -f /init.cql
+        cqlsh cassandra -k timer_service -f /v1-schema.cql
+        echo 'Cassandra initialization completed!'
+      "
+    restart: "no"
+
+  # DynamoDB Local
+  dynamodb:
+    image: amazon/dynamodb-local:latest
+    container_name: timer-service-dynamodb-dev
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - dynamodb_data:/home/dynamodblocal/data
+    networks:
+      - timer-network
+
+  dynamodb-init:
+    image: amazon/aws-cli:latest
+    depends_on:
+      dynamodb:
+        condition: service_started
+    volumes:
+      - ../server/databases/dynamodb/schema:/schema
+    networks:
+      - timer-network
+    environment:
+      AWS_ACCESS_KEY_ID: dummy
+      AWS_SECRET_ACCESS_KEY: dummy
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for DynamoDB Local to be ready...' &&
+        until curl http://dynamodb:8000; do
+          echo 'DynamoDB not ready, waiting...'
+          sleep 2
+        done &&
+        echo 'Creating DynamoDB tables from schema...' &&
+        aws dynamodb create-table --endpoint-url http://dynamodb:8000 --cli-input-json file:///schema/v1.json &&
+        echo 'DynamoDB schema execution completed successfully!'
+      "
+
+  # MongoDB
+  mongodb:
+    image: mongo:7
+    container_name: timer-service-mongodb-dev
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: mongodb_root_password
+      MONGO_INITDB_DATABASE: timer_service
+    ports:
+      - "27017:27017"
+    networks:
+      - timer-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+      start_period: 30s
+
+  mongodb-init:
+    image: mongo:7
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ../server/databases/mongodb/schema:/schema
+    networks:
+      - timer-network
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for MongoDB to be ready...' &&
+        until mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval 'db.runCommand({ping:1})' --quiet; do
+          echo 'MongoDB not ready, waiting...'
+          sleep 2
+        done &&
+        echo 'Creating timer_service database and user...' &&
+        mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval '
+          use timer_service;
+          try {
+            db.createUser({
+              user: \"timer_user\",
+              pwd: \"timer_password\", 
+              roles: [{role: \"readWrite\", db: \"timer_service\"}]
+            });
+            print(\"User timer_user created successfully\");
+          } catch (e) {
+            if (e.code === 51003) {
+              print(\"User timer_user already exists\");
+            } else {
+              throw e;
+            }
+          }
+        ' &&
+        echo 'Executing schema with root user...' &&
+        mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin timer_service < /schema/v1.js &&
+        echo 'Schema execution completed successfully!'
+      "
+
+  # MySQL
+  mysql:
+    image: mysql:8
+    container_name: timer-service-mysql-dev
+    environment:
+      MYSQL_ROOT_PASSWORD: timer_root_password
+      MYSQL_DATABASE: timer_service
+      MYSQL_USER: timer_user
+      MYSQL_PASSWORD: timer_password
+    ports:
+      - "3306:3306"
+    networks:
+      - timer-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "timer_user", "-ptimer_password"]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+      start_period: 30s
+
+  mysql-init:
+    image: mysql:8
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ../server/databases/mysql/schema:/schema
+    networks:
+      - timer-network
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for MySQL to be ready...' &&
+        until mysqladmin ping -h mysql -u timer_user -ptimer_password --silent; do
+          echo 'MySQL not ready, waiting...'
+          sleep 2
+        done &&
+        echo 'Executing schema...' &&
+        mysql -h mysql -u timer_user -ptimer_password timer_service < /schema/v1.sql &&
+        echo 'Schema execution completed successfully!'
+      "
+
+  # PostgreSQL
+  postgresql:
+    image: postgres:17
+    container_name: timer-service-postgresql-dev
+    environment:
+      POSTGRES_PASSWORD: postgres_root_password
+      POSTGRES_DB: timer_service
+    networks:
+      - timer-network
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d timer_service"]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+      start_period: 30s
+
+  postgresql-init:
+    image: postgres:17
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    networks:
+      - timer-network
+    volumes:
+      - ../server/databases/postgresql/schema:/schema
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for PostgreSQL to be ready...' &&
+        until pg_isready -h postgresql -U postgres -d timer_service; do
+          echo 'PostgreSQL not ready, waiting...'
+          sleep 2
+        done &&
+        echo 'Creating timer_user...' &&
+        PGPASSWORD=postgres_root_password psql -h postgresql -U postgres -d timer_service -c \"CREATE USER timer_user WITH PASSWORD 'timer_password';\" || echo 'User may already exist' &&
+        PGPASSWORD=postgres_root_password psql -h postgresql -U postgres -d timer_service -c \"GRANT ALL PRIVILEGES ON DATABASE timer_service TO timer_user;\" &&
+        echo 'Executing schema...' &&
+        PGPASSWORD=postgres_root_password psql -h postgresql -U postgres -d timer_service -f /schema/v1.sql &&
+        echo 'Schema execution completed successfully!'
+      "
+
+volumes:
+  dynamodb_data:
+
+networks:
+  timer-network:
+    driver: bridge 
