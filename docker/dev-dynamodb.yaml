@@ -10,7 +10,7 @@ services:
     volumes:
       - dynamodb_data:/home/dynamodblocal/data
     networks:
-      - timer-service-network
+      - timer-network
     # healthcheck: # not sure why this is not working
     #   test: ["CMD", "nc", "-z", "localhost", "8000"]
     #   timeout: 20s
@@ -26,7 +26,7 @@ services:
     volumes:
       - ../server/databases/dynamodb/schema:/schema
     networks:
-      - timer-service-network
+      - timer-network
     environment:
       AWS_ACCESS_KEY_ID: dummy
       AWS_SECRET_ACCESS_KEY: dummy
@@ -47,5 +47,5 @@ volumes:
   dynamodb_data:
 
 networks:
-  timer-service-network:
+  timer-network:
     driver: bridge 

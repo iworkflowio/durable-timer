@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  scylladb:
+    image: scylladb/scylla:5.4.1
+    container_name: timer-service-scylladb-dev
+    ports:
+      - "9042:9042"
+    command: >
+      --seeds=scylladb
+      --smp 1
+      --memory 750M
+      --overprovisioned 1
+      --api-address 0.0.0.0
+    networks:
+      - timer-network
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "DESCRIBE KEYSPACES"]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+      start_period: 60s
+
+  scylladb-init:
+    image: scylladb/scylla:5.4.9 # use the same image as cassandra, so that the init script is compatible
+    container_name: scylladb-init
+    depends_on:
+      scylladb:
+        condition: service_healthy
+    volumes:
+      - ./scripts/cassandra-init.cql:/init.cql:ro
+      - ../server/databases/cassandra/schema/v1.cql:/v1-schema.cql:ro
+    networks:
+      - timer-network
+    entrypoint: |
+      bash -c "
+        echo 'Waiting for Cassandra to be ready...'
+        until cqlsh scylladb -e 'describe keyspaces' > /dev/null 2>&1; do
+          echo 'ScyllaDB not ready yet, waiting...'
+          sleep 2
+        done
+        echo 'ScyllaDB is ready, executing initialization script...'
+        cqlsh ScyllaDB -f /init.cql
+        cqlsh ScyllaDB -k timer_service -f /v1-schema.cql
+        echo 'ScyllaDB initialization completed!'
+      "
+    restart: "no"
+
+networks:
+  timer-network:
+    driver: bridge 
