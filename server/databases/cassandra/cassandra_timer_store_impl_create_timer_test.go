@@ -250,31 +250,157 @@ func TestCreateTimer_ConcurrentCreation(t *testing.T) {
 	assert.Equal(t, numGoroutines, totalCount, "All timers should be found in database")
 }
 
-func TestCreateTimer_NilPayloadAndRetryPolicy(t *testing.T) {
+func TestCreateTimerNoLock_Basic(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	shardId := 6
-	namespace := "test-namespace"
+	shardId := 10
+	namespace := "test-namespace-nolock"
 
-	// First claim the shard
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
-	require.Nil(t, err)
-
-	// Create timer with nil payload and retry policy
+	// Create a basic timer without needing shard ownership
 	timer := &databases.DbTimer{
-		Id:                     "timer-nil-fields",
+		Id:                     "timer-nolock-1",
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
 		CallbackUrl:            "https://example.com/callback",
+		CallbackTimeoutSeconds: 30,
+		CreatedAt:              time.Now(),
+	}
+
+	createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
+	assert.Nil(t, createErr)
+
+	// Verify the timer was inserted
+	var count int
+	countQuery := `SELECT COUNT(*) FROM timers WHERE shard_id = ? AND row_type = ? ALLOW FILTERING`
+	scanErr := store.session.Query(countQuery, shardId, databases.RowTypeTimer).Scan(&count)
+	require.NoError(t, scanErr)
+	assert.Equal(t, 1, count)
+
+	// Verify using the index to find the timer
+	var dbTimerId, dbNamespace, dbCallbackUrl string
+	var dbExecuteAt, dbCreatedAt time.Time
+	var dbCallbackTimeout int32
+	var dbAttempts int
+
+	indexQuery := `SELECT timer_id, timer_namespace, timer_execute_at, timer_callback_url, timer_callback_timeout_seconds, timer_created_at, timer_attempts 
+	               FROM timers WHERE timer_namespace = ? AND timer_id = ? ALLOW FILTERING`
+	scanErr = store.session.Query(indexQuery, timer.Namespace, timer.Id).
+		Scan(&dbTimerId, &dbNamespace, &dbExecuteAt, &dbCallbackUrl, &dbCallbackTimeout, &dbCreatedAt, &dbAttempts)
+
+	require.NoError(t, scanErr)
+	assert.Equal(t, timer.Id, dbTimerId)
+	assert.Equal(t, timer.Namespace, dbNamespace)
+	assert.Equal(t, timer.CallbackUrl, dbCallbackUrl)
+	assert.Equal(t, timer.CallbackTimeoutSeconds, dbCallbackTimeout)
+	assert.Equal(t, 0, dbAttempts) // Should start at 0
+	assert.WithinDuration(t, timer.ExecuteAt, dbExecuteAt, time.Second)
+	assert.WithinDuration(t, timer.CreatedAt, dbCreatedAt, time.Second)
+}
+
+func TestCreateTimerNoLock_WithPayload(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 11
+	namespace := "test-namespace-nolock"
+
+	// Create timer with complex payload
+	payload := map[string]interface{}{
+		"userId":   54321,
+		"message":  "NoLock Timer Message",
+		"settings": map[string]bool{"enabled": true},
+		"tags":     []string{"nolock", "test"},
+	}
+
+	timer := &databases.DbTimer{
+		Id:                     "timer-nolock-payload",
+		Namespace:              namespace,
+		ExecuteAt:              time.Now().Add(10 * time.Minute),
+		CallbackUrl:            "https://example.com/nolock/callback",
+		Payload:                payload,
+		CallbackTimeoutSeconds: 60,
+		CreatedAt:              time.Now(),
+	}
+
+	createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
+	assert.Nil(t, createErr)
+
+	// Verify payload was serialized correctly using the index
+	var dbPayload string
+	query := `SELECT timer_payload FROM timers WHERE timer_namespace = ? AND timer_id = ? ALLOW FILTERING`
+	scanErr := store.session.Query(query, timer.Namespace, timer.Id).Scan(&dbPayload)
+
+	require.NoError(t, scanErr)
+	assert.Contains(t, dbPayload, "54321")
+	assert.Contains(t, dbPayload, "NoLock Timer Message")
+	assert.Contains(t, dbPayload, "enabled")
+	assert.Contains(t, dbPayload, "nolock")
+}
+
+func TestCreateTimerNoLock_WithRetryPolicy(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 12
+	namespace := "test-namespace-nolock"
+
+	// Create timer with retry policy
+	retryPolicy := map[string]interface{}{
+		"maxAttempts":       5,
+		"backoffMultiplier": 1.5,
+		"initialInterval":   "60s",
+		"maxInterval":       "600s",
+	}
+
+	timer := &databases.DbTimer{
+		Id:                     "timer-nolock-retry",
+		Namespace:              namespace,
+		ExecuteAt:              time.Now().Add(15 * time.Minute),
+		CallbackUrl:            "https://example.com/nolock/retry",
+		RetryPolicy:            retryPolicy,
+		CallbackTimeoutSeconds: 45,
+		CreatedAt:              time.Now(),
+	}
+
+	createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
+	assert.Nil(t, createErr)
+
+	// Verify retry policy was serialized correctly using the index
+	var dbRetryPolicy string
+	query := `SELECT timer_retry_policy FROM timers WHERE timer_namespace = ? AND timer_id = ? ALLOW FILTERING`
+	scanErr := store.session.Query(query, timer.Namespace, timer.Id).Scan(&dbRetryPolicy)
+
+	require.NoError(t, scanErr)
+	assert.Contains(t, dbRetryPolicy, "maxAttempts")
+	assert.Contains(t, dbRetryPolicy, "backoffMultiplier")
+	assert.Contains(t, dbRetryPolicy, "60s")
+}
+
+func TestCreateTimerNoLock_NilPayloadAndRetryPolicy(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 13
+	namespace := "test-namespace-nolock"
+
+	// Create timer with nil payload and retry policy
+	timer := &databases.DbTimer{
+		Id:                     "timer-nolock-nil-fields",
+		Namespace:              namespace,
+		ExecuteAt:              time.Now().Add(5 * time.Minute),
+		CallbackUrl:            "https://example.com/nolock/nil",
 		Payload:                nil,
 		RetryPolicy:            nil,
 		CallbackTimeoutSeconds: 30,
 		CreatedAt:              time.Now(),
 	}
 
-	createErr := store.CreateTimer(ctx, shardId, shardVersion, namespace, timer)
+	createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
 	assert.Nil(t, createErr)
 
 	// Verify nil fields are handled correctly using the index
@@ -293,30 +419,80 @@ func TestCreateTimer_NilPayloadAndRetryPolicy(t *testing.T) {
 	}
 }
 
-
-
-func TestCreateTimer_NoShardRecord(t *testing.T) {
+func TestCreateTimerNoLock_InvalidPayloadSerialization(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	shardId := 8
-	namespace := "test-namespace"
+	shardId := 14
+	namespace := "test-namespace-nolock"
 
-	// Don't claim the shard first - no shard record exists
+	// Create timer with non-serializable payload (function type)
 	timer := &databases.DbTimer{
-		Id:                     "timer-no-shard",
+		Id:                     "timer-nolock-invalid-payload",
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
-		CallbackUrl:            "https://example.com/callback",
+		CallbackUrl:            "https://example.com/nolock/invalid",
+		Payload:                func() {}, // Functions can't be JSON serialized
 		CallbackTimeoutSeconds: 30,
 		CreatedAt:              time.Now(),
 	}
 
-	// Try to create timer without shard record - should fail
-	createErr := store.CreateTimer(ctx, shardId, 1, namespace, timer)
+	createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
 
-	// Should fail since shard doesn't exist
+	// Should fail with marshaling error
 	assert.NotNil(t, createErr)
-	assert.Contains(t, createErr.CustomMessage, "shard record does not exist")
+	assert.Contains(t, createErr.CustomMessage, "failed to marshal timer payload")
+}
+
+func TestCreateTimerNoLock_ConcurrentCreation(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 15
+	namespace := "test-namespace-nolock"
+
+	numGoroutines := 10
+	var wg sync.WaitGroup
+	results := make([]*databases.DbError, numGoroutines)
+
+	// Launch concurrent timer creation (no shard ownership needed)
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			timer := &databases.DbTimer{
+				Id:                     fmt.Sprintf("concurrent-nolock-timer-%d", idx),
+				Namespace:              namespace,
+				ExecuteAt:              time.Now().Add(time.Duration(idx) * time.Minute),
+				CallbackUrl:            fmt.Sprintf("https://example.com/nolock/callback/%d", idx),
+				CallbackTimeoutSeconds: 30,
+				CreatedAt:              time.Now(),
+			}
+			results[idx] = store.CreateTimerNoLock(ctx, shardId, namespace, timer)
+		}(i)
+	}
+
+	wg.Wait()
+
+	// All should succeed since there's no locking
+	successCount := 0
+	for i, result := range results {
+		if result == nil {
+			successCount++
+		} else {
+			t.Logf("Timer creation %d failed: %v", i, result.CustomMessage)
+		}
+	}
+
+	// Verify all timers were created by counting timer records in the shard
+	var totalCount int
+	countQuery := `SELECT COUNT(*) FROM timers WHERE shard_id = ? AND row_type = ? ALLOW FILTERING`
+	scanErr := store.session.Query(countQuery, shardId, databases.RowTypeTimer).Scan(&totalCount)
+
+	require.NoError(t, scanErr)
+
+	assert.Equal(t, numGoroutines, successCount, "All concurrent timer creations should succeed")
+	assert.Equal(t, numGoroutines, totalCount, "All timers should be found in database")
 }

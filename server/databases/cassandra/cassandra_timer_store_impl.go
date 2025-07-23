@@ -202,8 +202,51 @@ func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shar
 }
 
 func (c *CassandraTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+	// Generate UUID for the timer
+	timerUUID := gocql.TimeUUID()
+
+	// Serialize payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON string
+
+	if timer.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(timer.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadJSON = string(payloadBytes)
+	}
+
+	if timer.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(timer.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyJSON = string(retryPolicyBytes)
+	}
+
+	// Insert the timer directly without any locking or version checking
+	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	insertErr := c.session.Query(insertQuery,
+		shardId,
+		databases.RowTypeTimer,
+		timer.ExecuteAt,
+		timerUUID,
+		timer.Id,
+		timer.Namespace,
+		timer.CallbackUrl,
+		payloadJSON,
+		retryPolicyJSON,
+		timer.CallbackTimeoutSeconds,
+		timer.CreatedAt,
+		0, // timer_attempts starts at 0
+	).WithContext(ctx).Exec()
+
+	if insertErr != nil {
+		return databases.NewGenericDbError("failed to insert timer", insertErr)
+	}
+
+	return nil
 }
 
 func (c *CassandraTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId int, namespace string, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
