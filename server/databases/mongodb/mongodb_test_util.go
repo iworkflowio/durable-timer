@@ -106,8 +106,8 @@ func setupTestStore(t *testing.T) (*MongoDBTimerStore, func()) {
 }
 
 func createTestDatabase() error {
-	// Connect as root user
-	uri := fmt.Sprintf("mongodb://%s:%s@%s:%d/?authSource=%s",
+	// Connect as root user with direct connection for localhost testing
+	uri := fmt.Sprintf("mongodb://%s:%s@%s:%d/?authSource=%s&directConnection=true",
 		testUsername, testPassword, getTestHost(), testPort, testAuthDatabase)
 
 	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(uri))
@@ -132,8 +132,8 @@ func createTestDatabase() error {
 }
 
 func dropTestDatabase() error {
-	// Connect as root user
-	uri := fmt.Sprintf("mongodb://%s:%s@%s:%d/?authSource=%s",
+	// Connect as root user with direct connection for localhost testing
+	uri := fmt.Sprintf("mongodb://%s:%s@%s:%d/?authSource=%s&directConnection=true",
 		testUsername, testPassword, getTestHost(), testPort, testAuthDatabase)
 
 	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(uri))

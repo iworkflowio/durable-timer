@@ -24,9 +24,17 @@ type MongoDBTimerStore struct {
 
 // NewMongoDBTimerStore creates a new MongoDB timer store
 func NewMongoDBTimerStore(config *config.MongoDBConnectConfig) (databases.TimerStore, error) {
-	// Build connection URI
-	uri := fmt.Sprintf("mongodb://%s:%s@%s:%d/%s?authSource=%s",
-		config.Username, config.Password, config.Host, config.Port, config.Database, config.AuthDatabase)
+	// Build connection URI - use replica set config only for non-localhost connections
+	var uri string
+	if config.Host == "localhost" || config.Host == "127.0.0.1" {
+		// For localhost connections (testing), use direct connection to bypass replica set discovery
+		uri = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s?authSource=%s&directConnection=true",
+			config.Username, config.Password, config.Host, config.Port, config.Database, config.AuthDatabase)
+	} else {
+		// For production, use replica set configuration for transactions
+		uri = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s?authSource=%s&replicaSet=timer-rs&readConcern=majority&w=majority",
+			config.Username, config.Password, config.Host, config.Port, config.Database, config.AuthDatabase)
+	}
 
 	// Configure client options
 	clientOptions := options.Client().
@@ -229,14 +237,182 @@ func isDuplicateKeyError(err error) bool {
 	return false
 }
 
-func (c *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
+	// Serialize payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON interface{}
+
+	if timer.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(timer.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadJSON = string(payloadBytes)
+	}
+
+	if timer.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(timer.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyJSON = string(retryPolicyBytes)
+	}
+
+	// Use MongoDB transaction to atomically check shard version and insert timer
+	session, sessionErr := m.client.StartSession()
+	if sessionErr != nil {
+		return databases.NewGenericDbError("failed to start MongoDB session", sessionErr)
+	}
+	defer session.EndSession(ctx)
+
+	var dbErr *databases.DbError
+	transactionErr := mongo.WithSession(ctx, session, func(sc mongo.SessionContext) error {
+		// Start transaction
+		if startErr := session.StartTransaction(); startErr != nil {
+			return startErr
+		}
+
+		// Read the shard to get current version
+		shardFilter := bson.M{
+			"shard_id":         shardId,
+			"row_type":         databases.RowTypeShard,
+			"timer_execute_at": databases.ZeroTimestamp,
+			"timer_uuid":       databases.ZeroUUIDString,
+		}
+
+		var shardDoc bson.M
+		shardErr := m.collection.FindOne(sc, shardFilter).Decode(&shardDoc)
+		if shardErr != nil {
+			if errors.Is(shardErr, mongo.ErrNoDocuments) {
+				// Shard doesn't exist
+				conflictInfo := &databases.ShardInfo{
+					ShardVersion: 0,
+				}
+				dbErr = databases.NewDbErrorOnShardConditionFail("shard not found during timer creation", nil, conflictInfo)
+				return nil // Return from transaction function, will abort transaction
+			}
+			dbErr = databases.NewGenericDbError("failed to read shard", shardErr)
+			return nil
+		}
+
+		// Get actual shard version and compare
+		actualShardVersion := getInt64FromBSON(shardDoc, "shard_version")
+		if actualShardVersion != shardVersion {
+			// Version mismatch
+			conflictInfo := &databases.ShardInfo{
+				ShardVersion: actualShardVersion,
+			}
+			dbErr = databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer creation", nil, conflictInfo)
+			return nil // Return from transaction function, will abort transaction
+		}
+
+		// Shard version matches, proceed to insert timer
+		timerObjectId := primitive.NewObjectID()
+		timerDoc := m.buildTimerDocument(timerObjectId, shardId, timer, payloadJSON, retryPolicyJSON)
+
+		// Insert the timer within the transaction
+		_, insertErr := m.collection.InsertOne(sc, timerDoc)
+		if insertErr != nil {
+			dbErr = databases.NewGenericDbError("failed to insert timer", insertErr)
+			return nil
+		}
+
+		// Commit transaction
+		if commitErr := session.CommitTransaction(sc); commitErr != nil {
+			dbErr = databases.NewGenericDbError("failed to commit transaction", commitErr)
+			return nil
+		}
+
+		return nil
+	})
+
+	if transactionErr != nil {
+		session.AbortTransaction(ctx)
+		return databases.NewGenericDbError("transaction failed", transactionErr)
+	}
+
+	return dbErr
 }
 
-func (c *MongoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+// buildTimerDocument creates a timer document for insertion
+func (m *MongoDBTimerStore) buildTimerDocument(timerObjectId primitive.ObjectID, shardId int, timer *databases.DbTimer, payloadJSON, retryPolicyJSON interface{}) bson.M {
+	timerDoc := bson.M{
+		"_id":                            timerObjectId,
+		"shard_id":                       shardId,
+		"row_type":                       databases.RowTypeTimer,
+		"timer_execute_at":               timer.ExecuteAt,
+		"timer_uuid":                     databases.ZeroUUIDString, // Placeholder UUID
+		"timer_id":                       timer.Id,
+		"timer_namespace":                timer.Namespace,
+		"timer_callback_url":             timer.CallbackUrl,
+		"timer_callback_timeout_seconds": timer.CallbackTimeoutSeconds,
+		"timer_created_at":               timer.CreatedAt,
+		"timer_attempts":                 0,
+	}
+
+	if payloadJSON != nil {
+		timerDoc["timer_payload"] = payloadJSON
+	}
+
+	if retryPolicyJSON != nil {
+		timerDoc["timer_retry_policy"] = retryPolicyJSON
+	}
+
+	return timerDoc
+}
+
+func (m *MongoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
+	// Serialize payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON interface{}
+
+	if timer.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(timer.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadJSON = string(payloadBytes)
+	}
+
+	if timer.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(timer.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyJSON = string(retryPolicyBytes)
+	}
+
+	// Generate a new ObjectId for the timer record
+	timerObjectId := primitive.NewObjectID()
+
+	// Create timer document
+	timerDoc := bson.M{
+		"_id":                            timerObjectId,
+		"shard_id":                       shardId,
+		"row_type":                       databases.RowTypeTimer,
+		"timer_execute_at":               timer.ExecuteAt,
+		"timer_uuid":                     databases.ZeroUUIDString, // Placeholder UUID
+		"timer_id":                       timer.Id,
+		"timer_namespace":                timer.Namespace,
+		"timer_callback_url":             timer.CallbackUrl,
+		"timer_callback_timeout_seconds": timer.CallbackTimeoutSeconds,
+		"timer_created_at":               timer.CreatedAt,
+		"timer_attempts":                 0,
+	}
+
+	if payloadJSON != nil {
+		timerDoc["timer_payload"] = payloadJSON
+	}
+
+	if retryPolicyJSON != nil {
+		timerDoc["timer_retry_policy"] = retryPolicyJSON
+	}
+
+	// Insert the timer directly without any locking or version checking
+	_, insertErr := m.collection.InsertOne(ctx, timerDoc)
+	if insertErr != nil {
+		return databases.NewGenericDbError("failed to insert timer", insertErr)
+	}
+
+	return nil
 }
 
 func (c *MongoDBTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId int, namespace string, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {

@@ -2,6 +2,15 @@
 
 This directory contains the MongoDB implementation of the `TimerStore` interface for the distributed durable timer service.
 
+## Requirements
+
+**IMPORTANT**: The `CreateTimer` method requires MongoDB transactions to ensure atomic shard version checking and timer insertion. This means the MongoDB deployment must be one of:
+- MongoDB replica set (recommended for production)
+- MongoDB sharded cluster with mongos
+- MongoDB Atlas cluster
+
+Standalone MongoDB instances are **NOT supported** for the `CreateTimer` method as they don't support transactions, which could lead to race conditions and data consistency issues.
+
 ## Files
 
 - `mongodb_timer_store_impl.go` - MongoDB implementation of the TimerStore interface
@@ -23,8 +32,23 @@ For shard documents, the timer-specific fields (`timer_execute_at`, `timer_uuid`
 - **BSON Documents**: Uses MongoDB's native BSON document format
 - **Compound Indexes**: Optimized indexes for execution queries and timer lookups
 - **Partial Indexes**: Uses `partialFilterExpression` to create conditional indexes
-- **Optimistic Concurrency**: Implements version-based concurrency control with atomic updates
+- **ACID Transactions**: The `CreateTimer` method uses MongoDB transactions to atomically read shard version and insert timer records
+- **Optimistic Concurrency**: Implements version-based concurrency control with atomic updates for non-transactional operations
 - **MongoDB Error Handling**: Proper handling of duplicate key errors (E11000)
+
+## CreateTimer Implementation
+
+The `CreateTimer` method uses MongoDB transactions to ensure atomicity:
+
+1. **Start Transaction**: Creates a MongoDB session and begins a transaction
+2. **Read Shard**: Reads the shard document to get the current version within the transaction
+3. **Version Check**: Compares the actual shard version with the expected version
+4. **Insert Timer**: If version matches, inserts the timer document within the same transaction
+5. **Commit**: Commits the transaction if all operations succeed
+
+This approach prevents race conditions where the shard version could change between the version check and timer insertion, ensuring data consistency at the cost of requiring transaction support.
+
+The `CreateTimerNoLock` method does not require transactions and works with standalone MongoDB instances as it performs a simple insert without version checking.
 
 ## Configuration
 
