@@ -6,7 +6,9 @@ A highly scalable, distributed durable timer service
 * [x] Cassandra
 * [x] ScyllaDB
 * [x] MongoDB
-* [x] TiDB
 * [x] DynamoDB
 * [x] MySQL
 * [x] PostgreSQL
+* [ ] TiDB: TODO
+* [ ] MS SQL Server: TODO
+* [ ] Oracle DB: TODO
