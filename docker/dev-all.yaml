@@ -95,12 +95,16 @@ services:
   mongodb:
     image: mongo:7
     container_name: timer-service-mongodb-dev
+    command: ["mongod", "--replSet", "timer-rs", "--bind_ip_all", "--keyFile", "/etc/mongodb-keyfile", "--auth"]
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: mongodb_root_password
       MONGO_INITDB_DATABASE: timer_service
     ports:
       - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./scripts/mongodb-keyfile:/etc/mongodb-keyfile:ro
     networks:
       - timer-network
     healthcheck:
@@ -108,15 +112,13 @@ services:
       timeout: 20s
       retries: 10
       interval: 10s
-      start_period: 30s
+      start_period: 40s
 
-  mongodb-init:
+  mongodb-replica-init:
     image: mongo:7
     depends_on:
       mongodb:
         condition: service_healthy
-    volumes:
-      - ../server/databases/mongodb/schema:/schema
     networks:
       - timer-network
     entrypoint: >
@@ -124,6 +126,49 @@ services:
         echo 'Waiting for MongoDB to be ready...' &&
         until mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval 'db.runCommand({ping:1})' --quiet; do
           echo 'MongoDB not ready, waiting...'
+          sleep 2
+        done &&
+        echo 'Initializing replica set...' &&
+        mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval '
+          try {
+            result = rs.initiate({
+              _id: \"timer-rs\",
+              members: [
+                { _id: 0, host: \"mongodb:27017\" }
+              ]
+            });
+            print(\"Replica set initiation result:\", JSON.stringify(result));
+          } catch (e) {
+            if (e.code === 23 || e.message.includes(\"already initialized\")) {
+              print(\"Replica set already initialized\");
+            } else {
+              print(\"Error initializing replica set:\", e);
+              throw e;
+            }
+          }
+        ' &&
+        echo 'Waiting for replica set to be ready...' &&
+        until mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval 'rs.status().ok' --quiet; do
+          echo 'Replica set not ready, waiting...'
+          sleep 2
+        done &&
+        echo 'Replica set initialized successfully!'
+      "
+
+  mongodb-init:
+    image: mongo:7
+    depends_on:
+      mongodb-replica-init:
+        condition: service_completed_successfully
+    volumes:
+      - ../server/databases/mongodb/schema:/schema
+    networks:
+      - timer-network
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for replica set to be ready...' &&
+        until mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval 'rs.status().ok && db.runCommand({ping:1}).ok' --quiet; do
+          echo 'Replica set not ready, waiting...'
           sleep 2
         done &&
         echo 'Creating timer_service database and user...' &&
@@ -234,6 +279,7 @@ services:
 
 volumes:
   dynamodb_data:
+  mongodb_data:
 
 networks:
   timer-network:
