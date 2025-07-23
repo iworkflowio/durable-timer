@@ -170,32 +170,42 @@ func isDuplicateKeyError(err error) bool {
 	return ok && sqlErr.Number == mysqlerr.ER_DUP_ENTRY
 }
 
-func (m *MySQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, timer *databases.DbTimer) (err *databases.DbError) {
+func (c *MySQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (m *MySQLTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
+func (c *MySQLTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (m *MySQLTimerStore) DeleteTimersUpToTimestamp(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
+func (c *MySQLTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId int, namespace string, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (m *MySQLTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, timerId string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
+func (c *MySQLTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (m *MySQLTimerStore) GetTimer(ctx context.Context, shardId int, timerId string) (timer *databases.DbTimer, err *databases.DbError) {
+func (c *MySQLTimerStore) BatchInsertTimers(ctx context.Context, shardId int, shardVersion int64, namespace string, TimersToInsert []*databases.DbTimer) *databases.DbError {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (m *MySQLTimerStore) DeleteTimer(ctx context.Context, shardId int, shardVersion int64, timerId string) *databases.DbError {
+func (c *MySQLTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (c *MySQLTimerStore) GetTimer(ctx context.Context, shardId int, namespace string, timerId string) (timer *databases.DbTimer, err *databases.DbError) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (c *MySQLTimerStore) DeleteTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timerId string) *databases.DbError {
 	//TODO implement me
 	panic("implement me")
 }

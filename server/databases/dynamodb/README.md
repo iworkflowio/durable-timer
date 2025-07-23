@@ -69,7 +69,7 @@ config := &config.DynamoDBConnectConfig{
   "timer_execute_at": {"S": "2025-07-22T15:00:00Z"},
   "timer_uuid": {"S": "550e8400-e29b-41d4-a716-446655440000"},
   "timer_id": {"S": "my-timer-123"},
-  "timer_group_id": {"S": "my-group"},
+  "timer_namespace": {"S": "my-namespace"},
   "timer_callback_url": {"S": "https://api.example.com/webhook"},
   "timer_payload": {"S": "{...}"},
   "timer_retry_policy": {"S": "{...}"},

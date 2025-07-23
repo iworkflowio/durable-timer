@@ -4,7 +4,7 @@ CREATE TABLE timers (
     timer_execute_at TIMESTAMP(3) NOT NULL,
     timer_uuid UUID NOT NULL,
     timer_id VARCHAR(255),
-    timer_group_id VARCHAR(255),
+    timer_namespace VARCHAR(255),
     timer_callback_url VARCHAR(2048),
     timer_payload JSONB,
     timer_retry_policy JSONB,
@@ -19,4 +19,4 @@ CREATE TABLE timers (
 );
 
 -- Unique index for timer lookups
-CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, row_type, timer_id); 
+CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, row_type, timer_namespace, timer_id); 

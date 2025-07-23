@@ -38,8 +38,8 @@ type (
 		// Unique identifier for the timer
 		Id string `json:"id"`
 
-		// Group identifier for the timer. It is used for scalability. Must be one of the groupIds enabled in the system. Must be provided in read/write operation requests for lookup.
-		GroupId string `json:"groupId"`
+		// Namespace identifier for the timer. It is for timer ID uniqueness. Also used for scalability design(tied to the number of shards). Must be one of the namespaces configured in the system.
+		Namespace string `json:"namespace"`
 
 		// When the timer is scheduled to execute
 		ExecuteAt time.Time `json:"executeAt"`
@@ -85,6 +85,9 @@ type (
 	}
 
 	UpdateDbTimerRequest struct {
+
+		// Timer Id
+		TimerId string `json:"timerId"`
 
 		// New execution time for the timer
 		ExecuteAt time.Time `json:"executeAt,omitempty"`

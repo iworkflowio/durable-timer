@@ -21,6 +21,7 @@ db.timers.createIndex({
 db.timers.createIndex({
     "shard_id": 1, 
     "row_type": 1, 
+    "timer_namespace": 1,
     "timer_id": 1
 }, {
     "unique": true

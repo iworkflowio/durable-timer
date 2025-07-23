@@ -71,7 +71,7 @@ config := &config.MongoDBConnectConfig{
   "timer_execute_at": ISODate("2025-07-22T15:00:00Z"),
   "timer_uuid": "550e8400-e29b-41d4-a716-446655440000",
   "timer_id": "my-timer-123",
-  "timer_group_id": "my-group",
+  "timer_namespace": "my-namespace",
   "timer_callback_url": "https://api.example.com/webhook",
   "timer_payload": {...},
   "timer_retry_policy": {...},

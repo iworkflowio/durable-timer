@@ -6,7 +6,7 @@ CREATE TABLE timers (
     
     -- Timer-specific fields (row_type = 2)
     timer_id text,
-    timer_group_id text,
+    timer_namespace text,
     timer_callback_url text,
     timer_payload text,          -- JSON serialized
     timer_retry_policy text,     -- JSON serialized
@@ -24,5 +24,5 @@ CREATE TABLE timers (
     PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid)
 ) WITH CLUSTERING ORDER BY (row_type ASC, timer_execute_at ASC, timer_uuid ASC);
 
--- Index for timer lookups by timer_id
-CREATE INDEX idx_timer_id ON timers (timer_id);
+-- Index for timer lookups by namespace and timer_id
+CREATE INDEX idx_timer_namespace_id ON timers (timer_namespace, timer_id);
