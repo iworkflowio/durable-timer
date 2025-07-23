@@ -1,8 +1,9 @@
 package databases
 
 import (
-	"github.com/gocql/gocql"
 	"time"
+
+	"github.com/gocql/gocql"
 )
 
 const RowTypeShard = int16(1) // 1 = shard record
@@ -37,6 +38,9 @@ type (
 
 		// Unique identifier for the timer
 		Id string `json:"id"`
+
+		// UUID for the timer - should be stable for the same timer to enable upsert behavior
+		TimerUuid string `json:"timerUuid"`
 
 		// Namespace identifier for the timer. It is for timer ID uniqueness. Also used for scalability design(tied to the number of shards). Must be one of the namespaces configured in the system.
 		Namespace string `json:"namespace"`

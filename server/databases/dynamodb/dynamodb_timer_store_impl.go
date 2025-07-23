@@ -290,7 +290,7 @@ func (d *DynamoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shard
 		"sort_key":                       &types.AttributeValueMemberS{Value: timerSortKey},
 		"row_type":                       &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeTimer))},
 		"timer_execute_at":               &types.AttributeValueMemberS{Value: timer.ExecuteAt.Format(time.RFC3339Nano)},
-		"timer_uuid":                     &types.AttributeValueMemberS{Value: databases.ZeroUUIDString}, // Placeholder UUID
+		"timer_uuid":                     &types.AttributeValueMemberS{Value: timer.TimerUuid},
 		"timer_id":                       &types.AttributeValueMemberS{Value: timer.Id},
 		"timer_namespace":                &types.AttributeValueMemberS{Value: timer.Namespace},
 		"timer_callback_url":             &types.AttributeValueMemberS{Value: timer.CallbackUrl},
@@ -386,7 +386,7 @@ func (d *DynamoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int,
 		"sort_key":                       &types.AttributeValueMemberS{Value: timerSortKey},
 		"row_type":                       &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeTimer))},
 		"timer_execute_at":               &types.AttributeValueMemberS{Value: timer.ExecuteAt.Format(time.RFC3339Nano)},
-		"timer_uuid":                     &types.AttributeValueMemberS{Value: databases.ZeroUUIDString}, // Placeholder UUID
+		"timer_uuid":                     &types.AttributeValueMemberS{Value: timer.TimerUuid},
 		"timer_id":                       &types.AttributeValueMemberS{Value: timer.Id},
 		"timer_namespace":                &types.AttributeValueMemberS{Value: timer.Namespace},
 		"timer_callback_url":             &types.AttributeValueMemberS{Value: timer.CallbackUrl},

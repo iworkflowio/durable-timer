@@ -2,7 +2,9 @@ package dynamodb
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -10,10 +12,19 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/gocql/gocql"
 	"github.com/iworkflowio/durable-timer/databases"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// generateTimerUUID creates a stable UUID from timer namespace and ID for consistent upsert behavior
+func generateTimerUUID(namespace, timerId string) string {
+	// Create a deterministic UUID based on namespace and timer ID
+	hash := md5.Sum([]byte(fmt.Sprintf("%s:%s", namespace, timerId)))
+	uuid, _ := gocql.UUIDFromBytes(hash[:])
+	return uuid.String()
+}
 
 func TestCreateTimer_Basic(t *testing.T) {
 	store, cleanup := setupTestStore(t)
@@ -21,16 +32,18 @@ func TestCreateTimer_Basic(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 1
-	namespace := "test-namespace"
+	namespace := "test_namespace"
 
-	// First claim the shard to set up shard version
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
+	// First, create a shard record
+	ownerId := "owner-1"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
-	// Create a basic timer
+	// Create a timer
 	timer := &databases.DbTimer{
 		Id:                     "timer-1",
+		TimerUuid:              generateTimerUUID(namespace, "timer-1"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
 		CallbackUrl:            "https://example.com/callback",
@@ -71,7 +84,7 @@ func TestCreateTimer_WithPayload(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 2
-	namespace := "test-namespace"
+	namespace := "test_namespace"
 
 	// First claim the shard
 	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
@@ -87,6 +100,7 @@ func TestCreateTimer_WithPayload(t *testing.T) {
 
 	timer := &databases.DbTimer{
 		Id:                     "timer-with-payload",
+		TimerUuid:              generateTimerUUID(namespace, "timer-with-payload"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(10 * time.Minute),
 		CallbackUrl:            "https://example.com/callback",
@@ -127,7 +141,7 @@ func TestCreateTimer_WithRetryPolicy(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 3
-	namespace := "test-namespace"
+	namespace := "test_namespace"
 
 	// First claim the shard
 	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
@@ -143,6 +157,7 @@ func TestCreateTimer_WithRetryPolicy(t *testing.T) {
 
 	timer := &databases.DbTimer{
 		Id:                     "timer-with-retry",
+		TimerUuid:              generateTimerUUID(namespace, "timer-with-retry"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(15 * time.Minute),
 		CallbackUrl:            "https://example.com/callback",
@@ -182,7 +197,7 @@ func TestCreateTimer_ShardVersionMismatch(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 4
-	namespace := "test-namespace"
+	namespace := "test_namespace"
 
 	// First claim the shard
 	actualShardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
@@ -190,6 +205,7 @@ func TestCreateTimer_ShardVersionMismatch(t *testing.T) {
 
 	timer := &databases.DbTimer{
 		Id:                     "timer-version-mismatch",
+		TimerUuid:              generateTimerUUID(namespace, "timer-version-mismatch"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
 		CallbackUrl:            "https://example.com/callback",
@@ -230,7 +246,7 @@ func TestCreateTimer_ConcurrentCreation(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 5
-	namespace := "test-namespace"
+	namespace := "test_namespace"
 
 	// First claim the shard
 	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
@@ -247,6 +263,7 @@ func TestCreateTimer_ConcurrentCreation(t *testing.T) {
 			defer wg.Done()
 			timer := &databases.DbTimer{
 				Id:                     fmt.Sprintf("concurrent-timer-%d", idx),
+				TimerUuid:              generateTimerUUID(namespace, fmt.Sprintf("concurrent-timer-%d", idx)),
 				Namespace:              namespace,
 				ExecuteAt:              time.Now().Add(time.Duration(idx) * time.Minute),
 				CallbackUrl:            fmt.Sprintf("https://example.com/callback/%d", idx),
@@ -292,11 +309,12 @@ func TestCreateTimer_NoShardRecord(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 6
-	namespace := "test-namespace"
+	namespace := "test_namespace"
 
 	// Don't claim the shard first - no shard record exists
 	timer := &databases.DbTimer{
 		Id:                     "timer-no-shard",
+		TimerUuid:              generateTimerUUID(namespace, "timer-no-shard"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
 		CallbackUrl:            "https://example.com/callback",
@@ -318,11 +336,12 @@ func TestCreateTimerNoLock_Basic(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 10
-	namespace := "test-namespace-nolock"
+	namespace := "test_namespace-nolock"
 
 	// Create a basic timer without needing shard ownership
 	timer := &databases.DbTimer{
 		Id:                     "timer-nolock-1",
+		TimerUuid:              generateTimerUUID(namespace, "timer-nolock-1"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
 		CallbackUrl:            "https://example.com/callback",
@@ -363,7 +382,7 @@ func TestCreateTimerNoLock_WithPayload(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 11
-	namespace := "test-namespace-nolock"
+	namespace := "test_namespace-nolock"
 
 	// Create timer with complex payload
 	payload := map[string]interface{}{
@@ -375,6 +394,7 @@ func TestCreateTimerNoLock_WithPayload(t *testing.T) {
 
 	timer := &databases.DbTimer{
 		Id:                     "timer-nolock-payload",
+		TimerUuid:              generateTimerUUID(namespace, "timer-nolock-payload"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(10 * time.Minute),
 		CallbackUrl:            "https://example.com/nolock/callback",
@@ -415,7 +435,7 @@ func TestCreateTimerNoLock_WithRetryPolicy(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 12
-	namespace := "test-namespace-nolock"
+	namespace := "test_namespace-nolock"
 
 	// Create timer with retry policy
 	retryPolicy := map[string]interface{}{
@@ -427,6 +447,7 @@ func TestCreateTimerNoLock_WithRetryPolicy(t *testing.T) {
 
 	timer := &databases.DbTimer{
 		Id:                     "timer-nolock-retry",
+		TimerUuid:              generateTimerUUID(namespace, "timer-nolock-retry"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(15 * time.Minute),
 		CallbackUrl:            "https://example.com/nolock/retry",
@@ -466,11 +487,12 @@ func TestCreateTimerNoLock_NilPayloadAndRetryPolicy(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 13
-	namespace := "test-namespace-nolock"
+	namespace := "test_namespace-nolock"
 
 	// Create timer with nil payload and retry policy
 	timer := &databases.DbTimer{
 		Id:                     "timer-nolock-nil-fields",
+		TimerUuid:              generateTimerUUID(namespace, "timer-nolock-nil-fields"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
 		CallbackUrl:            "https://example.com/nolock/nil",
@@ -513,11 +535,12 @@ func TestCreateTimerNoLock_InvalidPayloadSerialization(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 14
-	namespace := "test-namespace-nolock"
+	namespace := "test_namespace-nolock"
 
 	// Create timer with non-serializable payload (function type)
 	timer := &databases.DbTimer{
 		Id:                     "timer-nolock-invalid-payload",
+		TimerUuid:              generateTimerUUID(namespace, "timer-nolock-invalid-payload"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
 		CallbackUrl:            "https://example.com/nolock/invalid",
@@ -539,7 +562,7 @@ func TestCreateTimerNoLock_ConcurrentCreation(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 15
-	namespace := "test-namespace-nolock"
+	namespace := "test_namespace-nolock"
 
 	numGoroutines := 10
 	var wg sync.WaitGroup
@@ -552,6 +575,7 @@ func TestCreateTimerNoLock_ConcurrentCreation(t *testing.T) {
 			defer wg.Done()
 			timer := &databases.DbTimer{
 				Id:                     fmt.Sprintf("concurrent-nolock-timer-%d", idx),
+				TimerUuid:              generateTimerUUID(namespace, fmt.Sprintf("concurrent-nolock-timer-%d", idx)),
 				Namespace:              namespace,
 				ExecuteAt:              time.Now().Add(time.Duration(idx) * time.Minute),
 				CallbackUrl:            fmt.Sprintf("https://example.com/nolock/callback/%d", idx),
@@ -589,4 +613,214 @@ func TestCreateTimerNoLock_ConcurrentCreation(t *testing.T) {
 	scanResult, scanErr := store.client.Scan(ctx, scanInput)
 	require.NoError(t, scanErr)
 	assert.Equal(t, numGoroutines, int(scanResult.Count))
+}
+
+func TestCreateTimer_DuplicateTimerOverwrite(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 1
+	namespace := "test_namespace"
+	timerId := "duplicate-timer"
+	baseUuid := generateTimerUUID(namespace, timerId)
+	alternateUuid := generateTimerUUID(namespace, timerId+"_alt")
+
+	// Create shard record
+	ownerId := "owner-1"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	require.Nil(t, err)
+
+	// 1. Create original timer
+	originalExecuteAt := time.Now().Add(5 * time.Minute)
+	originalTimer := &databases.DbTimer{
+		Id:                     timerId,
+		TimerUuid:              baseUuid,
+		Namespace:              namespace,
+		ExecuteAt:              originalExecuteAt,
+		CallbackUrl:            "https://original.com/callback",
+		CallbackTimeoutSeconds: 30,
+		Payload:                map[string]interface{}{"version": "1"},
+		CreatedAt:              time.Now(),
+	}
+
+	createErr := store.CreateTimer(ctx, shardId, shardVersion, namespace, originalTimer)
+	assert.Nil(t, createErr)
+
+	// 2. Overwrite with same UUID and same execute_at
+	updatedTimer1 := &databases.DbTimer{
+		Id:                     timerId,
+		TimerUuid:              baseUuid, // Same UUID
+		Namespace:              namespace,
+		ExecuteAt:              originalExecuteAt, // Same execute_at
+		CallbackUrl:            "https://updated1.com/callback",
+		CallbackTimeoutSeconds: 45,
+		Payload:                map[string]interface{}{"version": "2"},
+		CreatedAt:              time.Now(),
+	}
+
+	updateErr1 := store.CreateTimer(ctx, shardId, shardVersion, namespace, updatedTimer1)
+	assert.Nil(t, updateErr1)
+
+	// 3. Verify count = 1 (all databases should have only one timer)
+	timerSortKey := fmt.Sprintf("TIMER#%s#%s", namespace, timerId)
+	scanInput1 := &dynamodb.ScanInput{
+		TableName:        aws.String(store.tableName),
+		FilterExpression: aws.String("shard_id = :shard_id AND begins_with(sort_key, :timer_prefix) AND timer_namespace = :namespace AND timer_id = :timer_id"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":shard_id":     &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+			":timer_prefix": &types.AttributeValueMemberS{Value: "TIMER#"},
+			":namespace":    &types.AttributeValueMemberS{Value: namespace},
+			":timer_id":     &types.AttributeValueMemberS{Value: timerId},
+		},
+	}
+
+	scanResult1, scanErr := store.client.Scan(ctx, scanInput1)
+	require.NoError(t, scanErr)
+	assert.Equal(t, int32(1), scanResult1.Count, "After same UUID + same execute_at: DynamoDB should have 1 timer")
+
+	// 4. Overwrite with same UUID but different execute_at
+	differentExecuteAt := time.Now().Add(10 * time.Minute)
+	updatedTimer2 := &databases.DbTimer{
+		Id:                     timerId,
+		TimerUuid:              baseUuid, // Same UUID
+		Namespace:              namespace,
+		ExecuteAt:              differentExecuteAt, // Different execute_at
+		CallbackUrl:            "https://updated2.com/callback",
+		CallbackTimeoutSeconds: 60,
+		Payload:                map[string]interface{}{"version": "3"},
+		CreatedAt:              time.Now(),
+	}
+
+	updateErr2 := store.CreateTimer(ctx, shardId, shardVersion, namespace, updatedTimer2)
+	assert.Nil(t, updateErr2)
+
+	// 5. Verify count = 1 (DynamoDB overwrites based on primary key shard_id + sort_key)
+	scanResult2, scanErr := store.client.Scan(ctx, scanInput1)
+	require.NoError(t, scanErr)
+	assert.Equal(t, int32(1), scanResult2.Count, "After same UUID + different execute_at: DynamoDB should have 1 timer")
+
+	// 6. Overwrite with different UUID and different execute_at
+	anotherExecuteAt := time.Now().Add(15 * time.Minute)
+	updatedTimer3 := &databases.DbTimer{
+		Id:                     timerId,
+		TimerUuid:              alternateUuid, // Different UUID
+		Namespace:              namespace,
+		ExecuteAt:              anotherExecuteAt, // Different execute_at
+		CallbackUrl:            "https://updated3.com/callback",
+		CallbackTimeoutSeconds: 90,
+		Payload:                map[string]interface{}{"version": "4"},
+		CreatedAt:              time.Now(),
+	}
+
+	updateErr3 := store.CreateTimer(ctx, shardId, shardVersion, namespace, updatedTimer3)
+	assert.Nil(t, updateErr3)
+
+	// 7. Verify count = 1 (DynamoDB still overwrites based on primary key)
+	scanResult3, scanErr := store.client.Scan(ctx, scanInput1)
+	require.NoError(t, scanErr)
+	assert.Equal(t, int32(1), scanResult3.Count, "After different UUID + different execute_at: DynamoDB should have 1 timer")
+
+	// Verify final timer has the latest data
+	getItemInput := &dynamodb.GetItemInput{
+		TableName: aws.String(store.tableName),
+		Key: map[string]types.AttributeValue{
+			"shard_id": &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+			"sort_key": &types.AttributeValueMemberS{Value: timerSortKey},
+		},
+	}
+
+	finalResult, getErr := store.client.GetItem(ctx, getItemInput)
+	require.NoError(t, getErr)
+	require.NotNil(t, finalResult.Item)
+
+	finalCallbackUrl := finalResult.Item["timer_callback_url"].(*types.AttributeValueMemberS).Value
+	finalPayload := finalResult.Item["timer_payload"].(*types.AttributeValueMemberS).Value
+	assert.Equal(t, "https://updated3.com/callback", finalCallbackUrl)
+	assert.Contains(t, finalPayload, "4")
+}
+
+func TestCreateTimerNoLock_DuplicateTimerOverwrite(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 1
+	namespace := "test_namespace"
+
+	// Create initial timer
+	originalTimer := &databases.DbTimer{
+		Id:                     "duplicate-timer-nolock",
+		TimerUuid:              generateTimerUUID(namespace, "duplicate-timer-nolock"),
+		Namespace:              namespace,
+		ExecuteAt:              time.Now().Add(5 * time.Minute),
+		CallbackUrl:            "https://original-nolock.com/callback",
+		CallbackTimeoutSeconds: 30,
+		RetryPolicy:            map[string]interface{}{"maxAttempts": 3},
+		CreatedAt:              time.Now(),
+	}
+
+	createErr := store.CreateTimerNoLock(ctx, shardId, namespace, originalTimer)
+	assert.Nil(t, createErr)
+
+	// Verify original timer was created
+	timerSortKey := fmt.Sprintf("TIMER#%s#%s", namespace, originalTimer.Id)
+	getItemInput := &dynamodb.GetItemInput{
+		TableName: aws.String(store.tableName),
+		Key: map[string]types.AttributeValue{
+			"shard_id": &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+			"sort_key": &types.AttributeValueMemberS{Value: timerSortKey},
+		},
+	}
+
+	result, getErr := store.client.GetItem(ctx, getItemInput)
+	require.NoError(t, getErr)
+	require.NotNil(t, result.Item)
+
+	callbackUrl := result.Item["timer_callback_url"].(*types.AttributeValueMemberS).Value
+	retryPolicy := result.Item["timer_retry_policy"].(*types.AttributeValueMemberS).Value
+	assert.Equal(t, "https://original-nolock.com/callback", callbackUrl)
+	assert.Contains(t, retryPolicy, "maxAttempts")
+
+	// Create updated timer with same ID (should overwrite due to DynamoDB's PutItem behavior)
+	updatedTimer := &databases.DbTimer{
+		Id:                     "duplicate-timer-nolock",                               // Same ID
+		TimerUuid:              generateTimerUUID(namespace, "duplicate-timer-nolock"), // Same UUID
+		Namespace:              namespace,
+		ExecuteAt:              time.Now().Add(15 * time.Minute),                                    // Different execution time
+		CallbackUrl:            "https://updated-nolock.com/callback",                               // Different callback
+		CallbackTimeoutSeconds: 60,                                                                  // Different timeout
+		RetryPolicy:            map[string]interface{}{"maxAttempts": 5, "strategy": "exponential"}, // Different retry policy
+		CreatedAt:              time.Now(),
+	}
+
+	updateErr := store.CreateTimerNoLock(ctx, shardId, namespace, updatedTimer)
+	assert.Nil(t, updateErr, "CreateTimerNoLock should overwrite existing timer instead of failing")
+
+	// Verify timer was overwritten (not duplicated)
+	updatedResult, getErr := store.client.GetItem(ctx, getItemInput)
+	require.NoError(t, getErr)
+	require.NotNil(t, updatedResult.Item)
+
+	updatedCallbackUrl := updatedResult.Item["timer_callback_url"].(*types.AttributeValueMemberS).Value
+	updatedRetryPolicy := updatedResult.Item["timer_retry_policy"].(*types.AttributeValueMemberS).Value
+	assert.Equal(t, "https://updated-nolock.com/callback", updatedCallbackUrl, "Timer should be overwritten with new callback URL")
+	assert.Contains(t, updatedRetryPolicy, "exponential", "Timer should be overwritten with new retry policy")
+	assert.Contains(t, updatedRetryPolicy, "5", "Timer should have updated maxAttempts")
+
+	// Verify there's exactly one record (overwritten, not duplicated)
+	scanInput := &dynamodb.ScanInput{
+		TableName:        aws.String(store.tableName),
+		FilterExpression: aws.String("shard_id = :shard_id AND begins_with(sort_key, :timer_prefix) AND timer_namespace = :namespace AND timer_id = :timer_id"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":shard_id":     &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+			":timer_prefix": &types.AttributeValueMemberS{Value: "TIMER#"},
+			":namespace":    &types.AttributeValueMemberS{Value: namespace},
+			":timer_id":     &types.AttributeValueMemberS{Value: updatedTimer.Id},
+		},
+	}
+
+	scanResult, scanErr := store.client.Scan(ctx, scanInput)
+	require.NoError(t, scanErr)
+	assert.Equal(t, int32(1), scanResult.Count, "Should have exactly one timer record (overwritten, not duplicated)")
 }

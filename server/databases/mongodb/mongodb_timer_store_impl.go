@@ -305,14 +305,22 @@ func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardV
 			return nil // Return from transaction function, will abort transaction
 		}
 
-		// Shard version matches, proceed to insert timer
-		timerObjectId := primitive.NewObjectID()
-		timerDoc := m.buildTimerDocument(timerObjectId, shardId, timer, payloadJSON, retryPolicyJSON)
+		// Shard version matches, proceed to upsert timer
+		timerDoc := m.buildTimerDocumentForUpsert(shardId, timer, payloadJSON, retryPolicyJSON)
 
-		// Insert the timer within the transaction
-		_, insertErr := m.collection.InsertOne(sc, timerDoc)
-		if insertErr != nil {
-			dbErr = databases.NewGenericDbError("failed to insert timer", insertErr)
+		// Use UpdateOne with upsert to overwrite existing timer if it exists
+		timerFilter := bson.M{
+			"shard_id":        shardId,
+			"row_type":        databases.RowTypeTimer,
+			"timer_namespace": timer.Namespace,
+			"timer_id":        timer.Id,
+		}
+
+		update := bson.M{"$set": timerDoc}
+		opts := options.Update().SetUpsert(true)
+		_, updateErr := m.collection.UpdateOne(sc, timerFilter, update, opts)
+		if updateErr != nil {
+			dbErr = databases.NewGenericDbError("failed to upsert timer", updateErr)
 			return nil
 		}
 
@@ -333,14 +341,13 @@ func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardV
 	return dbErr
 }
 
-// buildTimerDocument creates a timer document for insertion
-func (m *MongoDBTimerStore) buildTimerDocument(timerObjectId primitive.ObjectID, shardId int, timer *databases.DbTimer, payloadJSON, retryPolicyJSON interface{}) bson.M {
+// buildTimerDocumentForUpsert creates a timer document for upsert operations (without _id field)
+func (m *MongoDBTimerStore) buildTimerDocumentForUpsert(shardId int, timer *databases.DbTimer, payloadJSON, retryPolicyJSON interface{}) bson.M {
 	timerDoc := bson.M{
-		"_id":                            timerObjectId,
 		"shard_id":                       shardId,
 		"row_type":                       databases.RowTypeTimer,
 		"timer_execute_at":               timer.ExecuteAt,
-		"timer_uuid":                     databases.ZeroUUIDString, // Placeholder UUID
+		"timer_uuid":                     timer.TimerUuid,
 		"timer_id":                       timer.Id,
 		"timer_namespace":                timer.Namespace,
 		"timer_callback_url":             timer.CallbackUrl,
@@ -380,36 +387,22 @@ func (m *MongoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, 
 		retryPolicyJSON = string(retryPolicyBytes)
 	}
 
-	// Generate a new ObjectId for the timer record
-	timerObjectId := primitive.NewObjectID()
+	// Create timer document without _id for upsert
+	timerDoc := m.buildTimerDocumentForUpsert(shardId, timer, payloadJSON, retryPolicyJSON)
 
-	// Create timer document
-	timerDoc := bson.M{
-		"_id":                            timerObjectId,
-		"shard_id":                       shardId,
-		"row_type":                       databases.RowTypeTimer,
-		"timer_execute_at":               timer.ExecuteAt,
-		"timer_uuid":                     databases.ZeroUUIDString, // Placeholder UUID
-		"timer_id":                       timer.Id,
-		"timer_namespace":                timer.Namespace,
-		"timer_callback_url":             timer.CallbackUrl,
-		"timer_callback_timeout_seconds": timer.CallbackTimeoutSeconds,
-		"timer_created_at":               timer.CreatedAt,
-		"timer_attempts":                 0,
+	// Use UpdateOne with upsert to overwrite existing timer if it exists (no locking or version checking)
+	timerFilter := bson.M{
+		"shard_id":        shardId,
+		"row_type":        databases.RowTypeTimer,
+		"timer_namespace": timer.Namespace,
+		"timer_id":        timer.Id,
 	}
 
-	if payloadJSON != nil {
-		timerDoc["timer_payload"] = payloadJSON
-	}
-
-	if retryPolicyJSON != nil {
-		timerDoc["timer_retry_policy"] = retryPolicyJSON
-	}
-
-	// Insert the timer directly without any locking or version checking
-	_, insertErr := m.collection.InsertOne(ctx, timerDoc)
-	if insertErr != nil {
-		return databases.NewGenericDbError("failed to insert timer", insertErr)
+	update := bson.M{"$set": timerDoc}
+	opts := options.Update().SetUpsert(true)
+	_, updateErr := m.collection.UpdateOne(ctx, timerFilter, update, opts)
+	if updateErr != nil {
+		return databases.NewGenericDbError("failed to upsert timer", updateErr)
 	}
 
 	return nil

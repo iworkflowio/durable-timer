@@ -126,8 +126,11 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 }
 
 func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	// Generate UUID for the timer
-	timerUUID := gocql.TimeUUID()
+	// Use the provided timer UUID for consistent upsert behavior
+	timerUUID, parseErr := gocql.ParseUUID(timer.TimerUuid)
+	if parseErr != nil {
+		return databases.NewGenericDbError("failed to parse timer UUID", parseErr)
+	}
 
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON string
@@ -202,8 +205,11 @@ func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shar
 }
 
 func (c *CassandraTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	// Generate UUID for the timer
-	timerUUID := gocql.TimeUUID()
+	// Use the provided timer UUID for consistent upsert behavior
+	timerUUID, parseErr := gocql.ParseUUID(timer.TimerUuid)
+	if parseErr != nil {
+		return databases.NewGenericDbError("failed to parse timer UUID", parseErr)
+	}
 
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON string

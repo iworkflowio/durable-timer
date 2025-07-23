@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/gocql/gocql"
 
 	"github.com/VividCortex/mysqlerr"
 	_ "github.com/go-sql-driver/mysql"
@@ -226,24 +225,30 @@ func (m *MySQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVer
 		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer creation", nil, conflictInfo)
 	}
 
-	// Generate unique UUID for the timer
-	timerUUID := gocql.TimeUUID()
-
-	// Shard version matches, proceed to insert timer within the transaction
-	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
+	// Shard version matches, proceed to upsert timer within the transaction (overwrite if exists)
+	upsertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
 	                                   timer_id, timer_namespace, timer_callback_url, 
 	                                   timer_payload, timer_retry_policy, timer_callback_timeout_seconds,
 	                                   timer_created_at, timer_attempts) 
-	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	                ON DUPLICATE KEY UPDATE
+	                  timer_execute_at = VALUES(timer_execute_at),
+	                  timer_uuid = VALUES(timer_uuid),
+	                  timer_callback_url = VALUES(timer_callback_url),
+	                  timer_payload = VALUES(timer_payload),
+	                  timer_retry_policy = VALUES(timer_retry_policy),
+	                  timer_callback_timeout_seconds = VALUES(timer_callback_timeout_seconds),
+	                  timer_created_at = VALUES(timer_created_at),
+	                  timer_attempts = VALUES(timer_attempts)`
 
-	_, insertErr := tx.ExecContext(ctx, insertQuery,
-		shardId, databases.RowTypeTimer, timer.ExecuteAt, timerUUID.String(),
+	_, insertErr := tx.ExecContext(ctx, upsertQuery,
+		shardId, databases.RowTypeTimer, timer.ExecuteAt, timer.TimerUuid,
 		timer.Id, timer.Namespace, timer.CallbackUrl,
 		payloadJSON, retryPolicyJSON, timer.CallbackTimeoutSeconds,
 		timer.CreatedAt, 0)
 
 	if insertErr != nil {
-		return databases.NewGenericDbError("failed to insert timer", insertErr)
+		return databases.NewGenericDbError("failed to upsert timer", insertErr)
 	}
 
 	// Commit the transaction
@@ -274,24 +279,30 @@ func (m *MySQLTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, na
 		retryPolicyJSON = string(retryPolicyBytes)
 	}
 
-	// Generate unique UUID for the timer
-	timerUUID := gocql.TimeUUID()
-
-	// Insert the timer directly without any locking or version checking
-	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
+	// Upsert the timer directly without any locking or version checking (overwrite if exists)
+	upsertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
 	                                   timer_id, timer_namespace, timer_callback_url, 
 	                                   timer_payload, timer_retry_policy, timer_callback_timeout_seconds,
 	                                   timer_created_at, timer_attempts) 
-	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	                ON DUPLICATE KEY UPDATE
+	                  timer_execute_at = VALUES(timer_execute_at),
+	                  timer_uuid = VALUES(timer_uuid),
+	                  timer_callback_url = VALUES(timer_callback_url),
+	                  timer_payload = VALUES(timer_payload),
+	                  timer_retry_policy = VALUES(timer_retry_policy),
+	                  timer_callback_timeout_seconds = VALUES(timer_callback_timeout_seconds),
+	                  timer_created_at = VALUES(timer_created_at),
+	                  timer_attempts = VALUES(timer_attempts)`
 
-	_, insertErr := m.db.ExecContext(ctx, insertQuery,
-		shardId, databases.RowTypeTimer, timer.ExecuteAt, timerUUID.String(),
+	_, insertErr := m.db.ExecContext(ctx, upsertQuery,
+		shardId, databases.RowTypeTimer, timer.ExecuteAt, timer.TimerUuid,
 		timer.Id, timer.Namespace, timer.CallbackUrl,
 		payloadJSON, retryPolicyJSON, timer.CallbackTimeoutSeconds,
 		timer.CreatedAt, 0)
 
 	if insertErr != nil {
-		return databases.NewGenericDbError("failed to insert timer", insertErr)
+		return databases.NewGenericDbError("failed to upsert timer", insertErr)
 	}
 
 	return nil
