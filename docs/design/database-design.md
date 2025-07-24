@@ -121,7 +121,8 @@ CREATE TABLE timers (
     shard_id            INT NOT NULL,              -- Partition key
     row_type            SMALLINT NOT NULL,         -- 1=shard, 2=timer  
     timer_execute_at    TIMESTAMP,                 -- Clustering key (timer rows only)
-    timer_uuid          UUID,                      -- Uniqueness (timer rows only)
+    timer_uuid_high     BIGINT,                    -- UUID high 64 bits (timer rows only)
+    timer_uuid_low      BIGINT,                    -- UUID low 64 bits (timer rows only)
     
     -- Timer-specific fields (row_type = 2)
     timer_id            VARCHAR(255),              -- Business identifier
@@ -139,7 +140,7 @@ CREATE TABLE timers (
     shard_claimed_at    TIMESTAMP,                 -- When ownership was claimed
     shard_metadata      TEXT,                      -- Owner metadata (JSON)
     
-    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid)
+    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low)
 ) PARTITION BY HASH(shard_id);
 
 -- Indexes for efficient lookups
@@ -161,6 +162,56 @@ func generateTimerUUID(namespace, timerId string) string {
     return uuid.String()
 }
 ```
+
+### UUID Storage for Pagination Support
+
+**Problem**: Timer pagination requires predictable cursor ordering based on `execute_at + timer_uuid`. When loading a page of timers, the engine needs to determine if a new timer with a given `(execute_at, timer_uuid)` falls within the current page's time window. Storing UUIDs as native UUID types loses the ability to make these predictable comparisons.
+
+**Solution**: Split the 128-bit UUID into two 64-bit integers for most databases, enabling predictable ordering and comparison operations required for cursor-based pagination.
+
+### Database-Specific UUID Storage
+
+| Database | Storage Approach | Schema Fields |
+|----------|------------------|---------------|
+| **MySQL** | Split UUID into two BIGINT fields | `timer_uuid_high BIGINT`, `timer_uuid_low BIGINT` |
+| **PostgreSQL** | Split UUID into two BIGINT fields | `timer_uuid_high BIGINT`, `timer_uuid_low BIGINT` |
+| **MongoDB** | Split UUID into two 64-bit integers | `timer_uuid_high: NumberLong`, `timer_uuid_low: NumberLong` |
+| **Cassandra** | Split UUID into two BIGINT fields | `timer_uuid_high bigint`, `timer_uuid_low bigint` |
+| **DynamoDB** | Append UUID to execute_at timestamp | `timer_execute_at_with_uuid: "2025-01-01T10:00:00.000Z#550e8400-e29b-41d4-a716-446655440000"` |
+
+### UUID Conversion Logic
+
+```go
+// Convert UUID string to high/low 64-bit integers
+func uuidToHighLow(uuidStr string) (high, low int64, err error) {
+    uuid, err := gocql.ParseUUID(uuidStr)
+    if err != nil {
+        return 0, 0, err
+    }
+    
+    bytes := uuid.Bytes()
+    high = int64(binary.BigEndian.Uint64(bytes[0:8]))
+    low = int64(binary.BigEndian.Uint64(bytes[8:16]))
+    return high, low, nil
+}
+
+// Convert high/low integers back to UUID string
+func highLowToUUID(high, low int64) string {
+    bytes := make([]byte, 16)
+    binary.BigEndian.PutUint64(bytes[0:8], uint64(high))
+    binary.BigEndian.PutUint64(bytes[8:16], uint64(low))
+    uuid, _ := gocql.UUIDFromBytes(bytes)
+    return uuid.String()
+}
+```
+
+### DynamoDB Special Case
+
+DynamoDB uses a different approach due to its key structure limitations:
+- **Composite Sort Key**: `timer_execute_at_with_uuid` combines timestamp and UUID
+- **Format**: `"2025-01-01T10:00:00.000Z#550e8400-e29b-41d4-a716-446655440000"`
+- **Benefits**: Native lexicographic ordering for pagination, single field for cursor operations
+- **Parsing**: Split on `#` character to extract timestamp and UUID components
 
 ### Database-Specific Upsert Behavior
 
@@ -215,7 +266,8 @@ CREATE TABLE timers (
     shard_id int,
     row_type smallint,           -- 1=shard, 2=timer
     timer_execute_at timestamp,  -- Clustering key (only for timer rows)
-    timer_uuid uuid,             -- Uniqueness (only for timer rows)
+    timer_uuid_high bigint,      -- UUID high 64 bits (only for timer rows)
+    timer_uuid_low bigint,       -- UUID low 64 bits (only for timer rows)
     
     -- Timer-specific fields (row_type = 2)
     timer_id text,
@@ -234,8 +286,8 @@ CREATE TABLE timers (
     shard_metadata text,         -- JSON serialized
 
     
-    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid)
-) WITH CLUSTERING ORDER BY (row_type ASC, timer_execute_at ASC, timer_uuid ASC);
+    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low)
+) WITH CLUSTERING ORDER BY (row_type ASC, timer_execute_at ASC, timer_uuid_high ASC, timer_uuid_low ASC);
 
 -- Index for timer lookups by namespace and timer_id
 CREATE INDEX idx_timer_namespace_id ON timers (timer_namespace, timer_id);
@@ -276,7 +328,8 @@ SELECT * FROM timers WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ?
   shard_id: NumberInt(286),
   row_type: NumberInt(2),           // 2 = timer record
   timer_execute_at: ISODate("2024-12-20T15:30:00Z"),
-  timer_uuid: UUID("550e8400-e29b-41d4-a716-446655440000"),
+  timer_uuid_high: NumberLong("6149277061003718656"),   // UUID high 64 bits
+  timer_uuid_low: NumberLong("-5083286817432248320"),   // UUID low 64 bits
   
   // Timer-specific fields
   timer_id: "user-reminder-123", 
@@ -323,7 +376,7 @@ sh.enableSharding("timerservice")
 sh.shardCollection("timerservice.timers", {shard_id: 1})
 
 // Compound index optimized for timer execution queries
-db.timers.createIndex({shard_id: 1, row_type: 1, timer_execute_at: 1, timer_uuid: 1})
+db.timers.createIndex({shard_id: 1, row_type: 1, timer_execute_at: 1, timer_uuid_high: 1, timer_uuid_low: 1})
 
 // Index for timer CRUD operations
 db.timers.createIndex({shard_id: 1, row_type: 1, timer_namespace: 1, timer_id: 1}, {
@@ -379,63 +432,6 @@ db.timers.findOne({
 })
 ```
 
-### TiDB (MySQL Compatible)
-
-**Unified Table Definition**:
-```sql
-CREATE TABLE timers (
-    shard_id INT NOT NULL,
-    row_type SMALLINT NOT NULL,        -- 1=shard, 2=timer
-    timer_execute_at TIMESTAMP(3),     -- Clustering key (timer rows only)
-    timer_uuid CHAR(36),               -- UUID as string (timer rows only)
-    
-    -- Timer-specific fields (row_type = 2)
-    timer_id VARCHAR(255),
-    timer_namespace VARCHAR(255),
-    timer_callback_url VARCHAR(2048),
-    timer_payload JSON,
-    timer_retry_policy JSON,
-    timer_callback_timeout_seconds INT DEFAULT 30,
-    timer_created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    timer_attempts INT NOT NULL DEFAULT 0,
-    
-    -- Shard-specific fields (row_type = 1)
-    shard_version BIGINT,
-    shard_owner_id VARCHAR(255),
-    shard_claimed_at TIMESTAMP(3),
-    shard_metadata JSON,
-    
-    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid) CLUSTERED,
-    UNIQUE KEY idx_timer_lookup (shard_id, row_type, timer_namespace, timer_id)
-) PARTITION BY HASH(shard_id) PARTITIONS 1024;
-```
-
-
-**Query Patterns**:
-```sql
--- Shard ownership claim (row_type = 1)
--- MEDIUM FREQUENCY: Ownership changes during failover
-SELECT shard_version, shard_owner_id, shard_claimed_at, shard_metadata
-FROM timers WHERE shard_id = ? AND row_type = 1;
-
--- Update shard ownership (with optimistic concurrency)
-UPDATE timers 
-SET shard_version = ?, shard_owner_id = ?, shard_claimed_at = ?, shard_metadata = ?, updated_at = NOW()
-WHERE shard_id = ? AND row_type = 1 AND shard_version = ?;
-
--- Timer execution query (row_type = 2, optimized - uses clustered primary key)
--- HIGH FREQUENCY: Executed every few seconds per shard
-SELECT timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
-FROM timers 
-WHERE shard_id = ? AND row_type = 2 AND timer_execute_at <= NOW()
-ORDER BY timer_execute_at ASC, timer_uuid ASC
-LIMIT 1000;
-
--- Direct timer lookup (uses unique secondary index)
--- LOWER FREQUENCY: User-driven CRUD operations
-SELECT * FROM timers 
-WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ? AND timer_id = ?;
-```
 
 ### DynamoDB
 
@@ -463,20 +459,20 @@ WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ? AND timer_id = ?;
       "AttributeType": "S"
     },
     {
-      "AttributeName": "timer_execute_at",
+      "AttributeName": "timer_execute_at_with_uuid",
       "AttributeType": "S"
     }
   ],
   "LocalSecondaryIndexes": [
     {
-      "IndexName": "timer_execute_at-index",
+      "IndexName": "timer_execute_at_with_uuid-index",
       "KeySchema": [
         {
           "AttributeName": "shard_id",
           "KeyType": "HASH"
         },
         {
-          "AttributeName": "timer_execute_at",
+          "AttributeName": "timer_execute_at_with_uuid",
           "KeyType": "RANGE"
         }
       ]
@@ -492,8 +488,7 @@ WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ? AND timer_id = ?;
   "shard_id": {"N": "286"},
   "sortKey": {"S": "TIMER#user-services#user-reminder-123"},  // Composite sort key for timers
   "row_type": {"S": "TIMER"},
-  "timer_execute_at": {"S": "2024-12-20T15:30:00Z"},
-  "timer_uuid": {"S": "550e8400-e29b-41d4-a716-446655440000"},
+  "timer_execute_at_with_uuid": {"S": "2024-12-20T15:30:00.000Z#550e8400-e29b-41d4-a716-446655440000"},
   
   // Timer-specific fields
   "timer_id": {"S": "user-reminder-123"},
@@ -557,8 +552,8 @@ WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ? AND timer_id = ?;
 // HIGH FREQUENCY: Executed every few seconds per shard
 {
   TableName: "timers",
-  IndexName: "timer_execute_at-index",
-  KeyConditionExpression: "shard_id = :shard_id AND timer_execute_at <= :now",
+  IndexName: "timer_execute_at_with_uuid-index",
+  KeyConditionExpression: "shard_id = :shard_id AND timer_execute_at_with_uuid <= :now",
   FilterExpression: "row_type = :row_type",
   ExpressionAttributeValues: {
     ":shard_id": {"N": "286"},
@@ -598,7 +593,8 @@ CREATE TABLE timers (
     shard_id INT NOT NULL,
     row_type SMALLINT NOT NULL,        -- 1=shard, 2=timer
     timer_execute_at TIMESTAMP(3),     -- Clustering key (timer rows only)
-    timer_uuid CHAR(36),               -- UUID as string (timer rows only)
+    timer_uuid_high BIGINT,            -- UUID high 64 bits (timer rows only)
+    timer_uuid_low BIGINT,             -- UUID low 64 bits (timer rows only)
     
     -- Timer-specific fields (row_type = 2)
     timer_id VARCHAR(255),
@@ -616,7 +612,7 @@ CREATE TABLE timers (
     shard_claimed_at TIMESTAMP(3),
     shard_metadata JSON,
     
-    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid),  -- Clustered by default in MySQL
+    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low),  -- Clustered by default in MySQL
     UNIQUE INDEX idx_timer_lookup (shard_id, row_type, timer_namespace, timer_id)
 ) PARTITION BY HASH(shard_id) PARTITIONS 32;
 ```
@@ -655,7 +651,8 @@ CREATE TABLE timers (
     shard_id INTEGER NOT NULL,
     row_type SMALLINT NOT NULL,        -- 1=shard, 2=timer
     timer_execute_at TIMESTAMP(3),     -- Clustering key (timer rows only)
-    timer_uuid UUID,                   -- Uniqueness (timer rows only)
+    timer_uuid_high BIGINT,            -- UUID high 64 bits (timer rows only)
+    timer_uuid_low BIGINT,             -- UUID low 64 bits (timer rows only)
     
     -- Timer-specific fields (row_type = 2)
     timer_id VARCHAR(255),
@@ -673,7 +670,7 @@ CREATE TABLE timers (
     shard_claimed_at TIMESTAMP(3),
     shard_metadata JSONB,
     
-    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid)
+    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low)
 ) PARTITION BY HASH (shard_id);
 
 -- Create partitions (example for 32 partitions)
@@ -714,142 +711,5 @@ SELECT * FROM timers
 WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ? AND timer_id = ?;
 ```
 
-### Oracle Database
-
-**Unified Table Definition**:
-```sql
-CREATE TABLE timers (
-    shard_id NUMBER(10) NOT NULL,
-    row_type NUMBER(5) NOT NULL,       -- 1=shard, 2=timer
-    timer_execute_at TIMESTAMP(3),     -- Clustering key (timer rows only)
-    timer_uuid RAW(16),                -- UUID as binary (timer rows only)
-    
-    -- Timer-specific fields (row_type = 2)
-    timer_id VARCHAR2(255),
-    timer_namespace VARCHAR2(255),
-    timer_callback_url VARCHAR2(2048),
-    timer_payload CLOB CHECK (timer_payload IS JSON),
-    timer_retry_policy CLOB CHECK (timer_retry_policy IS JSON),
-    timer_callback_timeout_seconds NUMBER(10) DEFAULT 30,
-    timer_created_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
-    timer_attempts NUMBER(10) DEFAULT 0,
-
-    -- Shard-specific fields (row_type = 1)
-    shard_version NUMBER(19),
-    shard_owner_id VARCHAR2(255),
-    shard_claimed_at TIMESTAMP(3),
-    shard_metadata CLOB CHECK (shard_metadata IS JSON),
-    
-    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid)
-) 
-ORGANIZATION INDEX                    -- Index Organized Table for clustering
-PARTITION BY HASH (shard_id) PARTITIONS 32;
-
--- Unique index for timer lookups
-CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, row_type, timer_namespace, timer_id);
-```
-
-
-**Query Patterns**:
-```sql
--- Shard ownership claim (row_type = 1)
--- MEDIUM FREQUENCY: Ownership changes during failover
-SELECT shard_version, shard_owner_id, shard_claimed_at, shard_metadata
-FROM timers WHERE shard_id = ? AND row_type = 1;
-
--- Update shard ownership (with optimistic concurrency)
-UPDATE timers 
-SET shard_version = ?, shard_owner_id = ?, shard_claimed_at = ?, shard_metadata = ?, updated_at = CURRENT_TIMESTAMP
-WHERE shard_id = ? AND row_type = 1 AND shard_version = ?;
-
--- Timer execution query (row_type = 2, partition pruning)
--- HIGH FREQUENCY: Executed every few seconds per shard
-SELECT timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds
-FROM timers 
-WHERE shard_id = ? AND row_type = 2 AND timer_execute_at <= CURRENT_TIMESTAMP
-ORDER BY timer_execute_at ASC
-FETCH FIRST 1000 ROWS ONLY;
-
--- Direct timer lookup (partition + index access)
--- LOWER FREQUENCY: User-driven CRUD operations
-SELECT * FROM timers 
-WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ? AND timer_id = ?;
-```
-
-### Microsoft SQL Server
-
-**Unified Table Definition**:
-```sql
-CREATE TABLE timers (
-    shard_id INT NOT NULL,
-    row_type SMALLINT NOT NULL,        -- 1=shard, 2=timer
-    timer_execute_at DATETIME2(3),     -- Clustering key (timer rows only)
-    timer_uuid UNIQUEIDENTIFIER,       -- Uniqueness (timer rows only)
-    
-    -- Timer-specific fields (row_type = 2)
-    timer_id NVARCHAR(255),
-    timer_namespace NVARCHAR(255),
-    timer_callback_url NVARCHAR(2048),
-    timer_payload NVARCHAR(MAX) CHECK (ISJSON(timer_payload) = 1),
-    timer_retry_policy NVARCHAR(MAX) CHECK (ISJSON(timer_retry_policy) = 1),
-    timer_callback_timeout_seconds INT DEFAULT 30,
-    timer_created_at DATETIME2(3) NOT NULL DEFAULT GETUTCDATE(),
-    timer_attempts INT NOT NULL DEFAULT 0,
-
-    -- Shard-specific fields (row_type = 1)
-    shard_version BIGINT,
-    shard_owner_id NVARCHAR(255),
-    shard_claimed_at DATETIME2(3),
-    shard_metadata NVARCHAR(MAX) CHECK (ISJSON(shard_metadata) = 1),
-    
-    PRIMARY KEY CLUSTERED (shard_id, row_type, timer_execute_at, timer_uuid)  -- Explicit clustering
-);
-
--- Partition function and scheme (requires SQL Server Enterprise)
-CREATE PARTITION FUNCTION pf_shard_id (INT)
-AS RANGE LEFT FOR VALUES (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-                         16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30);
-
-CREATE PARTITION SCHEME ps_shard_id
-AS PARTITION pf_shard_id TO ([PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY], 
-                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
-                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
-                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
-                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
-                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
-                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY],
-                           [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY]);
-
--- Recreate table with partitioning (Enterprise Edition)
--- DROP TABLE timers;
--- CREATE TABLE timers (...) ON ps_shard_id(shard_id);
-
--- Unique index for timer lookups  
-CREATE UNIQUE INDEX idx_timer_lookup ON timers (shard_id, row_type, timer_namespace, timer_id);
-AS RANGE LEFT FOR VALUES (0, 1, 2, 3, 4, 5, 6, 7);
-
-CREATE PARTITION SCHEME ps_shards_id
-AS PARTITION pf_shards_id TO ([PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY], 
-                             [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY], [PRIMARY]);
-```
-
-
-**Query Patterns**:
-```sql
--- Timer execution query (partition elimination)
--- HIGH FREQUENCY: Executed every few seconds per shard
-SELECT TOP 1000 timer_id, timer_namespace, callback_url, payload, retry_policy
-FROM timers 
-WHERE shard_id = 286 AND execute_at <= GETUTCDATE()
-ORDER BY execute_at ASC;
-
--- Direct timer lookup (partition + index seek)
--- LOWER FREQUENCY: User-driven CRUD operations
-SELECT * FROM timers 
-WHERE shard_id = 286 AND timer_namespace = 'user-services' AND timer_id = 'user-reminder-123';
-```
-
-
----
 
 *This design provides a foundation for horizontal scaling while maintaining strong consistency and performance across all supported distributed databases.* 
