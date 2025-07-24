@@ -223,30 +223,29 @@ func (p *PostgreSQLTimerStore) CreateTimer(ctx context.Context, shardId int, sha
 	}
 
 	// Shard version matches, proceed to upsert timer within the transaction (overwrite if exists)
-	// First delete existing timer with same namespace+timer_id if it exists
-	deleteQuery := `DELETE FROM timers 
-	                WHERE shard_id = $1 AND row_type = $2 AND timer_namespace = $3 AND timer_id = $4`
-
-	_, deleteErr := tx.ExecContext(ctx, deleteQuery, shardId, databases.RowTypeTimer, timer.Namespace, timer.Id)
-	if deleteErr != nil {
-		return databases.NewGenericDbError("failed to delete existing timer", deleteErr)
-	}
-
-	// Then insert the new timer
-	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
+	upsertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
 	                                   timer_id, timer_namespace, timer_callback_url, 
 	                                   timer_payload, timer_retry_policy, timer_callback_timeout_seconds,
 	                                   timer_created_at, timer_attempts) 
-	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	                ON CONFLICT (shard_id, row_type, timer_namespace, timer_id) DO UPDATE SET
+	                  timer_execute_at = EXCLUDED.timer_execute_at,
+	                  timer_uuid = EXCLUDED.timer_uuid,
+	                  timer_callback_url = EXCLUDED.timer_callback_url,
+	                  timer_payload = EXCLUDED.timer_payload,
+	                  timer_retry_policy = EXCLUDED.timer_retry_policy,
+	                  timer_callback_timeout_seconds = EXCLUDED.timer_callback_timeout_seconds,
+	                  timer_created_at = EXCLUDED.timer_created_at,
+	                  timer_attempts = EXCLUDED.timer_attempts`
 
-	_, insertErr := tx.ExecContext(ctx, insertQuery,
+	_, insertErr := tx.ExecContext(ctx, upsertQuery,
 		shardId, databases.RowTypeTimer, timer.ExecuteAt, timer.TimerUuid,
 		timer.Id, timer.Namespace, timer.CallbackUrl,
 		payloadJSON, retryPolicyJSON, timer.CallbackTimeoutSeconds,
 		timer.CreatedAt, 0)
 
 	if insertErr != nil {
-		return databases.NewGenericDbError("failed to insert timer", insertErr)
+		return databases.NewGenericDbError("failed to upsert timer", insertErr)
 	}
 
 	// Commit the transaction
@@ -278,42 +277,29 @@ func (p *PostgreSQLTimerStore) CreateTimerNoLock(ctx context.Context, shardId in
 	}
 
 	// Upsert the timer directly without any locking or version checking (overwrite if exists)
-	// Use a transaction to ensure atomicity of delete+insert
-	tx, txErr := p.db.BeginTx(ctx, nil)
-	if txErr != nil {
-		return databases.NewGenericDbError("failed to start PostgreSQL transaction", txErr)
-	}
-	defer tx.Rollback() // Will be no-op if transaction is committed
-
-	// First delete existing timer with same namespace+timer_id if it exists
-	deleteQuery := `DELETE FROM timers 
-	                WHERE shard_id = $1 AND row_type = $2 AND timer_namespace = $3 AND timer_id = $4`
-
-	_, deleteErr := tx.ExecContext(ctx, deleteQuery, shardId, databases.RowTypeTimer, timer.Namespace, timer.Id)
-	if deleteErr != nil {
-		return databases.NewGenericDbError("failed to delete existing timer", deleteErr)
-	}
-
-	// Then insert the new timer
-	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
+	upsertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
 	                                   timer_id, timer_namespace, timer_callback_url, 
 	                                   timer_payload, timer_retry_policy, timer_callback_timeout_seconds,
 	                                   timer_created_at, timer_attempts) 
-	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	                ON CONFLICT (shard_id, row_type, timer_namespace, timer_id) DO UPDATE SET
+	                  timer_execute_at = EXCLUDED.timer_execute_at,
+	                  timer_uuid = EXCLUDED.timer_uuid,
+	                  timer_callback_url = EXCLUDED.timer_callback_url,
+	                  timer_payload = EXCLUDED.timer_payload,
+	                  timer_retry_policy = EXCLUDED.timer_retry_policy,
+	                  timer_callback_timeout_seconds = EXCLUDED.timer_callback_timeout_seconds,
+	                  timer_created_at = EXCLUDED.timer_created_at,
+	                  timer_attempts = EXCLUDED.timer_attempts`
 
-	_, insertErr := tx.ExecContext(ctx, insertQuery,
+	_, insertErr := p.db.ExecContext(ctx, upsertQuery,
 		shardId, databases.RowTypeTimer, timer.ExecuteAt, timer.TimerUuid,
 		timer.Id, timer.Namespace, timer.CallbackUrl,
 		payloadJSON, retryPolicyJSON, timer.CallbackTimeoutSeconds,
 		timer.CreatedAt, 0)
 
 	if insertErr != nil {
-		return databases.NewGenericDbError("failed to insert timer", insertErr)
-	}
-
-	// Commit the transaction
-	if commitErr := tx.Commit(); commitErr != nil {
-		return databases.NewGenericDbError("failed to commit transaction", commitErr)
+		return databases.NewGenericDbError("failed to upsert timer", insertErr)
 	}
 
 	return nil

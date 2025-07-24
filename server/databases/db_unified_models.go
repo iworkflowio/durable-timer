@@ -109,6 +109,10 @@ type (
 	}
 )
 
+func (d *DbError) String() string {
+	return d.Error()
+}
+
 func (d *DbError) Error() string {
 	return d.CustomMessage + "\n" + "Original error: " + d.OriginalError.Error()
 }

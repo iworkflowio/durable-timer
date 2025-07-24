@@ -57,14 +57,25 @@ func executeSchemaFile(db *sql.DB) error {
 			continue
 		}
 
-		// Skip comment-only lines
-		if strings.HasPrefix(stmt, "--") {
+		// Process the statement: remove comments but keep SQL content
+		lines := strings.Split(stmt, "\n")
+		var cleanLines []string
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "--") {
+				cleanLines = append(cleanLines, line)
+			}
+		}
+
+		if len(cleanLines) == 0 {
 			continue
 		}
 
-		_, err = db.Exec(stmt)
+		cleanStmt := strings.Join(cleanLines, " ")
+
+		_, err = db.Exec(cleanStmt)
 		if err != nil {
-			return fmt.Errorf("failed to execute SQL statement '%s': %w", stmt, err)
+			return fmt.Errorf("failed to execute SQL statement '%s': %w", cleanStmt, err)
 		}
 	}
 
