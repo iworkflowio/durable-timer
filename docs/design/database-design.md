@@ -188,7 +188,7 @@ func generateTimerUUID(namespace, timerId string) string {
 - Timer updates with different execution times are less common than creation/deletion operations
 - The performance benefits for high-volume timer processing outweigh the upsert limitation
 - Other databases (MySQL, PostgreSQL, MongoDB, DynamoDB) provide true upsert behavior
-- User can still use DeleteTimer API to delete first, if duplicate is not desirable
+- User can still use UpdateTimer API to update the execute_at, if duplicate is not desirable.
 
 **Query Patterns**:
 ```sql

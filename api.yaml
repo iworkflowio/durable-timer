@@ -33,7 +33,13 @@ paths:
       summary: Create a new timer
       description: |
         Creates a new one-time timer that will execute an HTTP callback at the specified time.
-        Timer IDs are used for deduplication within the namespace 
+        Timer IDs are used for deduplication within the namespace. 
+        Note that for most databases except Cassandra, calling this API with the same timer ID will overwrite the existing timer.
+        However, for Cassandra, calling this API with the same timer ID and same executeAt will overwrite the existing timer;
+        calling this API with the same timer ID and different executeAt will create a new timer. This is because Cassandra's upsert behavior 
+        and the fact that the primary key is a combination of timer ID and executeAt -- which we do that for clustering and performance of batch reads and deletions. 
+        If you want to update the timer with the same timer ID but different executeAt for Cassandra, you should use the update API.
+
       operationId: createTimer
       requestBody:
         required: true
