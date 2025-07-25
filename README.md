@@ -1,5 +1,5 @@
 # durable-timer 🚧WIP🚧
-A highly scalable, distributed durable timer service
+A highly scalable, performant and distributed durable timer service
 
 * [Requirement docs](./REQUIREMENTS.md)
 * [API Design docs](./docs/design/api-design.md)
@@ -7,6 +7,9 @@ A highly scalable, distributed durable timer service
 * [Repo layout](./docs/repo-layout.md)
 * [Design decisoins](./DECISION_LOG.md)
 
+## Use cases
+* Backoff retry(distributed, **NOT** local)
+* Durable timer(reminder notification, scheduled actions, etc)
 
 
 ## Supported databases
