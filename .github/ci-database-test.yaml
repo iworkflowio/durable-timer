@@ -1,0 +1,32 @@
+name: Database Integration Test
+on:
+  pull_request:
+  push:
+    branches:
+      - 'main'
+
+jobs:
+  tests:
+    name: "Database Integration testing"
+    runs-on: ubuntu-latest
+    permissions:
+      # Give the default GITHUB_TOKEN write permission to commit and push the
+      # added or changed files to the repository.
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+      - name: "Set up database environment"
+        run: docker compose -f docker/dev-all.yaml up -d
+      - name: "Test against cassandra"
+        run: cd server/ && make ci-cassandra-integ-test
+      - name: "Test against mongodb"
+        run: cd server/ && make ci-mongodb-integ-test
+      - name: "Test against mysql"
+        run: cd server/ && make ci-mysql-integ-test
+      - name: "Test against postgresql"
+        run: cd server/ && make ci-postgresql-integ-test
+      - name: "Test against dynamodb"
+        run: cd server/ && make ci-dynamodb-integ-test
+      - name: Dump docker logs
+        if: always()
+        uses: jwalton/gh-docker-logs@v2
