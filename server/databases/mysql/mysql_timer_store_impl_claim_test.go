@@ -23,32 +23,35 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 1
-	ownerId := "owner-1"
+	ownerId := "test-owner-123"
 	metadata := map[string]interface{}{
-		"instanceId": "instance-1",
-		"region":     "us-west-2",
+		"region": "us-west-2",
+		"zone":   "us-west-2a",
 	}
+
+	// Convert ZeroUUID to high/low format for test queries
+	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Claim ownership of a new shard
 	version, err := store.ClaimShardOwnership(ctx, shardId, ownerId, metadata)
 
+	// Verify success
 	assert.Nil(t, err)
 	assert.Equal(t, int64(1), version, "New shard should start with version 1")
 
-	// Verify the record was created correctly
+	// Verify the shard was created correctly in the database
 	var dbVersion int64
 	var dbOwnerId string
 	var dbMetadata string
 	var dbClaimedAt time.Time
-
-	query := "SELECT shard_version, shard_owner_id, shard_metadata, shard_claimed_at FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ?"
-	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, databases.ZeroUUIDString).Scan(&dbVersion, &dbOwnerId, &dbMetadata, &dbClaimedAt)
+	query := "SELECT shard_version, shard_owner_id, shard_metadata, shard_claimed_at FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?"
+	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerId, &dbMetadata, &dbClaimedAt)
 
 	require.NoError(t, scanErr)
 	assert.Equal(t, int64(1), dbVersion)
 	assert.Equal(t, ownerId, dbOwnerId)
-	assert.Contains(t, dbMetadata, "instance-1")
 	assert.Contains(t, dbMetadata, "us-west-2")
+	assert.Contains(t, dbMetadata, "us-west-2a")
 	assert.True(t, time.Since(dbClaimedAt) < 5*time.Second, "claimed_at should be recent")
 }
 
@@ -74,11 +77,14 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 	assert.Nil(t, err3)
 	assert.Equal(t, int64(3), version3)
 
+	// Convert ZeroUUID to high/low format for test queries
+	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+
 	// Verify final state
 	var dbVersion int64
 	var dbOwnerId string
-	query := "SELECT shard_version, shard_owner_id FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ?"
-	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, databases.ZeroUUIDString).Scan(&dbVersion, &dbOwnerId)
+	query := "SELECT shard_version, shard_owner_id FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?"
+	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerId)
 
 	require.NoError(t, scanErr)
 	assert.Equal(t, int64(3), dbVersion)
@@ -146,11 +152,14 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 	assert.Greater(t, failureCount, 0, "Should have some failures due to concurrency")
 	assert.Greater(t, maxVersion, int64(0), "Maximum version should be positive")
 
+	// Convert ZeroUUID to high/low format for test queries
+	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+
 	// Verify final database state
 	var dbVersion int64
 	var dbOwnerId string
-	query := "SELECT shard_version, shard_owner_id FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ?"
-	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, databases.ZeroUUIDString).Scan(&dbVersion, &dbOwnerId)
+	query := "SELECT shard_version, shard_owner_id FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?"
+	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerId)
 
 	require.NoError(t, scanErr)
 	assert.Equal(t, maxVersion, dbVersion, "Database version should match highest successful claim")
@@ -171,10 +180,13 @@ func TestClaimShardOwnership_NilMetadata(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, int64(1), version)
 
+	// Convert ZeroUUID to high/low format for test queries
+	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+
 	// Verify metadata is empty/null in database
 	var dbMetadata *string
-	query := "SELECT shard_metadata FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ?"
-	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, databases.ZeroUUIDString).Scan(&dbMetadata)
+	query := "SELECT shard_metadata FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?"
+	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbMetadata)
 
 	require.NoError(t, scanErr)
 	// Should be empty string or null
@@ -212,10 +224,13 @@ func TestClaimShardOwnership_ComplexMetadata(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, int64(1), version)
 
+	// Convert ZeroUUID to high/low format for test queries
+	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+
 	// Verify metadata is properly serialized
 	var dbMetadata string
-	query := "SELECT shard_metadata FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ?"
-	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, databases.ZeroUUIDString).Scan(&dbMetadata)
+	query := "SELECT shard_metadata FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?"
+	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbMetadata)
 
 	require.NoError(t, scanErr)
 	assert.Contains(t, dbMetadata, "i-1234567890abcdef0")

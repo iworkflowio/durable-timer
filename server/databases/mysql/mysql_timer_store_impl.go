@@ -61,6 +61,9 @@ func (m *MySQLTimerStore) Close() error {
 func (m *MySQLTimerStore) ClaimShardOwnership(
 	ctx context.Context, shardId int, ownerId string, metadata interface{},
 ) (shardVersion int64, retErr *databases.DbError) {
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+
 	// Serialize metadata to JSON
 	var metadataJSON interface{}
 	if metadata != nil {
@@ -69,8 +72,6 @@ func (m *MySQLTimerStore) ClaimShardOwnership(
 			return 0, databases.NewGenericDbError("failed to marshal metadata", err)
 		}
 		metadataJSON = string(metadataBytes)
-	} else {
-		metadataJSON = nil
 	}
 
 	now := time.Now().UTC()
@@ -79,10 +80,10 @@ func (m *MySQLTimerStore) ClaimShardOwnership(
 	var currentVersion int64
 	var currentOwnerId string
 	query := `SELECT shard_version, shard_owner_id FROM timers 
-	          WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ?`
+	          WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?`
 
 	err := m.db.QueryRowContext(ctx, query, shardId, databases.RowTypeShard,
-		databases.ZeroTimestamp, databases.ZeroUUIDString).Scan(&currentVersion, &currentOwnerId)
+		databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&currentVersion, &currentOwnerId)
 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, databases.NewGenericDbError("failed to read shard record", err)
@@ -91,12 +92,12 @@ func (m *MySQLTimerStore) ClaimShardOwnership(
 	if errors.Is(err, sql.ErrNoRows) {
 		// Shard doesn't exist, create it with version 1
 		newVersion := int64(1)
-		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
+		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, 
 		                                   shard_version, shard_owner_id, shard_claimed_at, shard_metadata) 
-		                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 		_, err := m.db.ExecContext(ctx, insertQuery,
-			shardId, databases.RowTypeShard, databases.ZeroTimestamp, databases.ZeroUUIDString,
+			shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow,
 			newVersion, ownerId, now, metadataJSON)
 
 		if err != nil {
@@ -109,10 +110,10 @@ func (m *MySQLTimerStore) ClaimShardOwnership(
 				var conflictMetadata string
 
 				conflictQuery := `SELECT shard_version, shard_owner_id, shard_claimed_at, shard_metadata 
-				                  FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ?`
+				                  FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?`
 
 				conflictErr := m.db.QueryRowContext(ctx, conflictQuery, shardId, databases.RowTypeShard,
-					databases.ZeroTimestamp, databases.ZeroUUIDString).Scan(&conflictVersion, &conflictOwnerId, &conflictClaimedAt, &conflictMetadata)
+					databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&conflictVersion, &conflictOwnerId, &conflictClaimedAt, &conflictMetadata)
 
 				if conflictErr == nil {
 					conflictInfo := &databases.ShardInfo{
@@ -135,11 +136,11 @@ func (m *MySQLTimerStore) ClaimShardOwnership(
 	// Update the shard with new version and ownership using optimistic concurrency control
 	newVersion := currentVersion + 1
 	updateQuery := `UPDATE timers SET shard_version = ?, shard_owner_id = ?, shard_claimed_at = ?, shard_metadata = ? 
-	                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? AND shard_version = ?`
+	                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? AND shard_version = ?`
 
 	result, err := m.db.ExecContext(ctx, updateQuery,
 		newVersion, ownerId, now, metadataJSON,
-		shardId, databases.RowTypeShard, databases.ZeroTimestamp, databases.ZeroUUIDString, currentVersion)
+		shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, currentVersion)
 
 	if err != nil {
 		return 0, databases.NewGenericDbError("failed to update shard record", err)
@@ -171,6 +172,12 @@ func isDuplicateKeyError(err error) bool {
 }
 
 func (m *MySQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
+	// Convert the provided timer UUID to high/low format for predictable pagination
+	timerUuidHigh, timerUuidLow, _ := databases.UuidToHighLow(timer.TimerUuid)
+
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON interface{}
 
@@ -200,10 +207,10 @@ func (m *MySQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVer
 	// Read the shard to get current version within the transaction
 	var actualShardVersion int64
 	shardQuery := `SELECT shard_version FROM timers 
-	               WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ?`
+	               WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?`
 
 	shardErr := tx.QueryRowContext(ctx, shardQuery, shardId, databases.RowTypeShard,
-		databases.ZeroTimestamp, databases.ZeroUUIDString).Scan(&actualShardVersion)
+		databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&actualShardVersion)
 
 	if shardErr != nil {
 		if errors.Is(shardErr, sql.ErrNoRows) {
@@ -226,14 +233,15 @@ func (m *MySQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVer
 	}
 
 	// Shard version matches, proceed to upsert timer within the transaction (overwrite if exists)
-	upsertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
+	upsertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, 
 	                                   timer_id, timer_namespace, timer_callback_url, 
 	                                   timer_payload, timer_retry_policy, timer_callback_timeout_seconds,
 	                                   timer_created_at, timer_attempts) 
-	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	                ON DUPLICATE KEY UPDATE
 	                  timer_execute_at = VALUES(timer_execute_at),
-	                  timer_uuid = VALUES(timer_uuid),
+	                  timer_uuid_high = VALUES(timer_uuid_high),
+	                  timer_uuid_low = VALUES(timer_uuid_low),
 	                  timer_callback_url = VALUES(timer_callback_url),
 	                  timer_payload = VALUES(timer_payload),
 	                  timer_retry_policy = VALUES(timer_retry_policy),
@@ -242,7 +250,7 @@ func (m *MySQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVer
 	                  timer_attempts = VALUES(timer_attempts)`
 
 	_, insertErr := tx.ExecContext(ctx, upsertQuery,
-		shardId, databases.RowTypeTimer, timer.ExecuteAt, timer.TimerUuid,
+		shardId, databases.RowTypeTimer, timer.ExecuteAt, timerUuidHigh, timerUuidLow,
 		timer.Id, timer.Namespace, timer.CallbackUrl,
 		payloadJSON, retryPolicyJSON, timer.CallbackTimeoutSeconds,
 		timer.CreatedAt, 0)
@@ -260,6 +268,9 @@ func (m *MySQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVer
 }
 
 func (m *MySQLTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
+	// Convert the provided timer UUID to high/low format for predictable pagination
+	timerUuidHigh, timerUuidLow, _ := databases.UuidToHighLow(timer.TimerUuid)
+
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON interface{}
 
@@ -280,14 +291,15 @@ func (m *MySQLTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, na
 	}
 
 	// Upsert the timer directly without any locking or version checking (overwrite if exists)
-	upsertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
+	upsertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, 
 	                                   timer_id, timer_namespace, timer_callback_url, 
 	                                   timer_payload, timer_retry_policy, timer_callback_timeout_seconds,
 	                                   timer_created_at, timer_attempts) 
-	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	                ON DUPLICATE KEY UPDATE
 	                  timer_execute_at = VALUES(timer_execute_at),
-	                  timer_uuid = VALUES(timer_uuid),
+	                  timer_uuid_high = VALUES(timer_uuid_high),
+	                  timer_uuid_low = VALUES(timer_uuid_low),
 	                  timer_callback_url = VALUES(timer_callback_url),
 	                  timer_payload = VALUES(timer_payload),
 	                  timer_retry_policy = VALUES(timer_retry_policy),
@@ -296,7 +308,7 @@ func (m *MySQLTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, na
 	                  timer_attempts = VALUES(timer_attempts)`
 
 	_, insertErr := m.db.ExecContext(ctx, upsertQuery,
-		shardId, databases.RowTypeTimer, timer.ExecuteAt, timer.TimerUuid,
+		shardId, databases.RowTypeTimer, timer.ExecuteAt, timerUuidHigh, timerUuidLow,
 		timer.Id, timer.Namespace, timer.CallbackUrl,
 		payloadJSON, retryPolicyJSON, timer.CallbackTimeoutSeconds,
 		timer.CreatedAt, 0)

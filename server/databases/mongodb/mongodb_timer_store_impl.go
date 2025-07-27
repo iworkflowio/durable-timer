@@ -82,16 +82,17 @@ func (m *MongoDBTimerStore) Close() error {
 func (m *MongoDBTimerStore) ClaimShardOwnership(
 	ctx context.Context, shardId int, ownerId string, metadata interface{},
 ) (shardVersion int64, retErr *databases.DbError) {
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+
 	// Serialize metadata to JSON
-	var metadataJSON interface{}
+	var metadataJSON string
 	if metadata != nil {
 		metadataBytes, err := json.Marshal(metadata)
 		if err != nil {
 			return 0, databases.NewGenericDbError("failed to marshal metadata", err)
 		}
 		metadataJSON = string(metadataBytes)
-	} else {
-		metadataJSON = nil
 	}
 
 	now := time.Now().UTC()
@@ -101,7 +102,8 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid":       databases.ZeroUUIDString,
+		"timer_uuid_high":  zeroUuidHigh,
+		"timer_uuid_low":   zeroUuidLow,
 	}
 
 	// First, try to read the current shard record
@@ -120,7 +122,8 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 			"shard_id":         shardId,
 			"row_type":         databases.RowTypeShard,
 			"timer_execute_at": databases.ZeroTimestamp,
-			"timer_uuid":       databases.ZeroUUIDString,
+			"timer_uuid_high":  zeroUuidHigh,
+			"timer_uuid_low":   zeroUuidLow,
 			"shard_version":    newVersion,
 			"shard_owner_id":   ownerId,
 			"shard_claimed_at": now,
@@ -162,7 +165,8 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid":       databases.ZeroUUIDString,
+		"timer_uuid_high":  zeroUuidHigh,
+		"timer_uuid_low":   zeroUuidLow,
 		"shard_version":    currentVersion, // Only update if version matches
 	}
 
@@ -238,6 +242,12 @@ func isDuplicateKeyError(err error) bool {
 }
 
 func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
+	// Convert the provided timer UUID to high/low format for predictable pagination
+	timerUuidHigh, timerUuidLow, _ := databases.UuidToHighLow(timer.TimerUuid)
+
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON interface{}
 
@@ -276,7 +286,8 @@ func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardV
 			"shard_id":         shardId,
 			"row_type":         databases.RowTypeShard,
 			"timer_execute_at": databases.ZeroTimestamp,
-			"timer_uuid":       databases.ZeroUUIDString,
+			"timer_uuid_high":  zeroUuidHigh,
+			"timer_uuid_low":   zeroUuidLow,
 		}
 
 		var shardDoc bson.M
@@ -306,7 +317,7 @@ func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardV
 		}
 
 		// Shard version matches, proceed to upsert timer
-		timerDoc := m.buildTimerDocumentForUpsert(shardId, timer, payloadJSON, retryPolicyJSON)
+		timerDoc := m.buildTimerDocumentForUpsert(shardId, timer, timerUuidHigh, timerUuidLow, payloadJSON, retryPolicyJSON)
 
 		// Use UpdateOne with upsert to overwrite existing timer if it exists
 		timerFilter := bson.M{
@@ -342,12 +353,13 @@ func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardV
 }
 
 // buildTimerDocumentForUpsert creates a timer document for upsert operations (without _id field)
-func (m *MongoDBTimerStore) buildTimerDocumentForUpsert(shardId int, timer *databases.DbTimer, payloadJSON, retryPolicyJSON interface{}) bson.M {
+func (m *MongoDBTimerStore) buildTimerDocumentForUpsert(shardId int, timer *databases.DbTimer, timerUuidHigh, timerUuidLow int64, payloadJSON, retryPolicyJSON interface{}) bson.M {
 	timerDoc := bson.M{
 		"shard_id":                       shardId,
 		"row_type":                       databases.RowTypeTimer,
 		"timer_execute_at":               timer.ExecuteAt,
-		"timer_uuid":                     timer.TimerUuid,
+		"timer_uuid_high":                timerUuidHigh,
+		"timer_uuid_low":                 timerUuidLow,
 		"timer_id":                       timer.Id,
 		"timer_namespace":                timer.Namespace,
 		"timer_callback_url":             timer.CallbackUrl,
@@ -368,6 +380,9 @@ func (m *MongoDBTimerStore) buildTimerDocumentForUpsert(shardId int, timer *data
 }
 
 func (m *MongoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
+	// Convert the provided timer UUID to high/low format for predictable pagination
+	timerUuidHigh, timerUuidLow, _ := databases.UuidToHighLow(timer.TimerUuid)
+
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON interface{}
 
@@ -388,7 +403,7 @@ func (m *MongoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, 
 	}
 
 	// Create timer document without _id for upsert
-	timerDoc := m.buildTimerDocumentForUpsert(shardId, timer, payloadJSON, retryPolicyJSON)
+	timerDoc := m.buildTimerDocumentForUpsert(shardId, timer, timerUuidHigh, timerUuidLow, payloadJSON, retryPolicyJSON)
 
 	// Use UpdateOne with upsert to overwrite existing timer if it exists (no locking or version checking)
 	timerFilter := bson.M{

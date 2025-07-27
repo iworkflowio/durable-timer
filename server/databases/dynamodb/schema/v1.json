@@ -10,7 +10,7 @@
       "AttributeType": "S"
     },
     {
-      "AttributeName": "timer_execute_at",
+      "AttributeName": "timer_execute_at_with_uuid",
       "AttributeType": "S"
     }
   ],
@@ -26,14 +26,14 @@
   ],
   "LocalSecondaryIndexes": [
     {
-      "IndexName": "ExecuteAtIndex",
+      "IndexName": "ExecuteAtWithUuidIndex",
       "KeySchema": [
         {
           "AttributeName": "shard_id",
           "KeyType": "HASH"
         },
         {
-          "AttributeName": "timer_execute_at",
+          "AttributeName": "timer_execute_at_with_uuid",
           "KeyType": "RANGE"
         }
       ],

@@ -24,11 +24,14 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 1
-	ownerId := "owner-1"
+	ownerId := "test-owner-123"
 	metadata := map[string]interface{}{
-		"instanceId": "instance-1",
-		"region":     "us-west-2",
+		"region": "us-west-2",
+		"zone":   "us-west-2a",
 	}
+
+	// Convert ZeroUUID to high/low format for test queries
+	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Claim ownership of a new shard
 	version, err := store.ClaimShardOwnership(ctx, shardId, ownerId, metadata)
@@ -36,12 +39,13 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, int64(1), version, "New shard should start with version 1")
 
-	// Verify the record was created correctly
+	// Verify the shard was created correctly in the database
 	filter := bson.M{
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid":       databases.ZeroUUIDString,
+		"timer_uuid_high":  zeroUuidHigh,
+		"timer_uuid_low":   zeroUuidLow,
 	}
 
 	var result bson.M
@@ -86,7 +90,8 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid":       databases.ZeroUUIDString,
+		"timer_uuid_high":  int64(0),
+		"timer_uuid_low":   int64(0),
 	}
 
 	var result bson.M
@@ -163,7 +168,8 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid":       databases.ZeroUUIDString,
+		"timer_uuid_high":  int64(0),
+		"timer_uuid_low":   int64(0),
 	}
 
 	var result bson.M
@@ -193,7 +199,8 @@ func TestClaimShardOwnership_NilMetadata(t *testing.T) {
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid":       databases.ZeroUUIDString,
+		"timer_uuid_high":  int64(0),
+		"timer_uuid_low":   int64(0),
 	}
 
 	var result bson.M
@@ -239,7 +246,8 @@ func TestClaimShardOwnership_ComplexMetadata(t *testing.T) {
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid":       databases.ZeroUUIDString,
+		"timer_uuid_high":  int64(0),
+		"timer_uuid_low":   int64(0),
 	}
 
 	var result bson.M

@@ -109,15 +109,17 @@ func (d *DynamoDBTimerStore) ClaimShardOwnership(
 		// Shard doesn't exist, create it with version 1
 		newVersion := int64(1)
 
+		// Create composite execute_at_with_uuid field for shard records (using zero values)
+		shardExecuteAtWithUuid := databases.FormatExecuteAtWithUuid(databases.ZeroTimestamp, databases.ZeroUUIDString)
+
 		item := map[string]types.AttributeValue{
-			"shard_id":         &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
-			"sort_key":         &types.AttributeValueMemberS{Value: shardSortKey},
-			"row_type":         &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeShard))},
-			"timer_execute_at": &types.AttributeValueMemberS{Value: databases.ZeroTimestamp.Format(time.RFC3339Nano)},
-			"timer_uuid":       &types.AttributeValueMemberS{Value: databases.ZeroUUIDString},
-			"shard_version":    &types.AttributeValueMemberN{Value: strconv.FormatInt(newVersion, 10)},
-			"shard_owner_id":   &types.AttributeValueMemberS{Value: ownerId},
-			"shard_claimed_at": &types.AttributeValueMemberS{Value: now.Format(time.RFC3339Nano)},
+			"shard_id":                   &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+			"sort_key":                   &types.AttributeValueMemberS{Value: shardSortKey},
+			"row_type":                   &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeShard))},
+			"timer_execute_at_with_uuid": &types.AttributeValueMemberS{Value: shardExecuteAtWithUuid},
+			"shard_version":              &types.AttributeValueMemberN{Value: strconv.FormatInt(newVersion, 10)},
+			"shard_owner_id":             &types.AttributeValueMemberS{Value: ownerId},
+			"shard_claimed_at":           &types.AttributeValueMemberS{Value: now.Format(time.RFC3339Nano)},
 		}
 
 		if metadataJSON != nil {
@@ -284,13 +286,15 @@ func (d *DynamoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shard
 	// Create timer sort key: TIMER#<namespace>#<timer_id>
 	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
 
+	// Create composite execute_at_with_uuid field for predictable pagination
+	executeAtWithUuid := databases.FormatExecuteAtWithUuid(timer.ExecuteAt, timer.TimerUuid.String())
+
 	// Create timer item
 	timerItem := map[string]types.AttributeValue{
 		"shard_id":                       &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
 		"sort_key":                       &types.AttributeValueMemberS{Value: timerSortKey},
 		"row_type":                       &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeTimer))},
-		"timer_execute_at":               &types.AttributeValueMemberS{Value: timer.ExecuteAt.Format(time.RFC3339Nano)},
-		"timer_uuid":                     &types.AttributeValueMemberS{Value: timer.TimerUuid},
+		"timer_execute_at_with_uuid":     &types.AttributeValueMemberS{Value: executeAtWithUuid},
 		"timer_id":                       &types.AttributeValueMemberS{Value: timer.Id},
 		"timer_namespace":                &types.AttributeValueMemberS{Value: timer.Namespace},
 		"timer_callback_url":             &types.AttributeValueMemberS{Value: timer.CallbackUrl},
@@ -380,13 +384,15 @@ func (d *DynamoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int,
 	// Create timer sort key: TIMER#<namespace>#<timer_id>
 	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
 
+	// Create composite execute_at_with_uuid field for predictable pagination
+	executeAtWithUuid := databases.FormatExecuteAtWithUuid(timer.ExecuteAt, timer.TimerUuid.String())
+
 	// Create timer item
 	timerItem := map[string]types.AttributeValue{
 		"shard_id":                       &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
 		"sort_key":                       &types.AttributeValueMemberS{Value: timerSortKey},
 		"row_type":                       &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeTimer))},
-		"timer_execute_at":               &types.AttributeValueMemberS{Value: timer.ExecuteAt.Format(time.RFC3339Nano)},
-		"timer_uuid":                     &types.AttributeValueMemberS{Value: timer.TimerUuid},
+		"timer_execute_at_with_uuid":     &types.AttributeValueMemberS{Value: executeAtWithUuid},
 		"timer_id":                       &types.AttributeValueMemberS{Value: timer.Id},
 		"timer_namespace":                &types.AttributeValueMemberS{Value: timer.Namespace},
 		"timer_callback_url":             &types.AttributeValueMemberS{Value: timer.CallbackUrl},

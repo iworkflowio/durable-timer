@@ -1,9 +1,8 @@
 package databases
 
 import (
+	"github.com/google/uuid"
 	"time"
-
-	"github.com/gocql/gocql"
 )
 
 const RowTypeShard = int16(1) // 1 = shard record
@@ -13,7 +12,7 @@ const RowTypeTimer = int16(2) // 2 = timer record
 // 1970-01-01 00:00:01 UTC (minimum valid MySQL TIMESTAMP)
 // 00000000-0000-0000-0000-000000000000
 var ZeroTimestamp = time.Unix(1, 0)
-var ZeroUUID = gocql.UUID{}
+var ZeroUUID = uuid.UUID{}
 var ZeroUUIDString = ZeroUUID.String()
 
 type (
@@ -37,36 +36,36 @@ type (
 	DbTimer struct {
 
 		// Unique identifier for the timer
-		Id string `json:"id"`
+		Id string
 
 		// UUID for the timer - should be stable for the same timer to enable upsert behavior
-		TimerUuid string `json:"timerUuid"`
+		TimerUuid uuid.UUID
 
 		// Namespace identifier for the timer. It is for timer ID uniqueness. Also used for scalability design(tied to the number of shards). Must be one of the namespaces configured in the system.
-		Namespace string `json:"namespace"`
+		Namespace string
 
 		// When the timer is scheduled to execute
-		ExecuteAt time.Time `json:"executeAt"`
+		ExecuteAt time.Time
 
 		// HTTP URL to call when executing, returning 200 with CallbackResponse means success, otherwise will be retried.
-		CallbackUrl string `json:"callbackUrl"`
+		CallbackUrl string
 
 		// Custom payload data
-		Payload interface{} `json:"payload,omitempty"`
+		Payload interface{}
 
-		RetryPolicy interface{} `json:"retryPolicy,omitempty"`
+		RetryPolicy interface{}
 
 		// Timeout for the HTTP callback in seconds
-		CallbackTimeoutSeconds int32 `json:"callbackTimeoutSeconds,omitempty"`
+		CallbackTimeoutSeconds int32
 
 		// When the timer was created
-		CreatedAt time.Time `json:"createdAt"`
+		CreatedAt time.Time
 
 		// When the timer was last updated
-		UpdatedAt time.Time `json:"updatedAt"`
+		UpdatedAt time.Time
 
 		// When the timer was executed (if applicable)
-		ExecutedAt time.Time `json:"executedAt,omitempty"`
+		ExecutedAt time.Time
 	}
 
 	RangeGetTimersRequest struct {
@@ -91,21 +90,21 @@ type (
 	UpdateDbTimerRequest struct {
 
 		// Timer Id
-		TimerId string `json:"timerId"`
+		TimerId string
 
 		// New execution time for the timer
-		ExecuteAt time.Time `json:"executeAt,omitempty"`
+		ExecuteAt time.Time
 
 		// New callback URL, returning 200 with CallbackResponse means success, otherwise will be retried.
-		CallbackUrl string `json:"callbackUrl,omitempty"`
+		CallbackUrl string
 
 		// New payload data
-		Payload interface{} `json:"payload,omitempty"`
+		Payload interface{}
 
-		RetryPolicy interface{} `json:"retryPolicy,omitempty"`
+		RetryPolicy interface{}
 
 		// New timeout for the HTTP callback in seconds
-		CallbackTimeoutSeconds int32 `json:"callbackTimeoutSeconds,omitempty"`
+		CallbackTimeoutSeconds int32
 	}
 )
 

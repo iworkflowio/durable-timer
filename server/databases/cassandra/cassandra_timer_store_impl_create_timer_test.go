@@ -8,18 +8,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gocql/gocql"
+	"github.com/google/uuid"
 	"github.com/iworkflowio/durable-timer/databases"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // generateTimerUUID creates a stable UUID from timer namespace and ID for consistent upsert behavior
-func generateTimerUUID(namespace, timerId string) string {
+func generateTimerUUID(namespace, timerId string) uuid.UUID {
 	// Create a deterministic UUID based on namespace and timer ID
 	hash := md5.Sum([]byte(fmt.Sprintf("%s:%s", namespace, timerId)))
-	uuid, _ := gocql.UUIDFromBytes(hash[:])
-	return uuid.String()
+	uuid, _ := uuid.FromBytes(hash[:])
+	return uuid
 }
 
 func TestCreateTimer_Basic(t *testing.T) {

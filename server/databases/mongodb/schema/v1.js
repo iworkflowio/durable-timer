@@ -12,7 +12,8 @@ db.timers.createIndex({
     "shard_id": 1, 
     "row_type": 1, 
     "timer_execute_at": 1, 
-    "timer_uuid": 1
+    "timer_uuid_high": 1,
+    "timer_uuid_low": 1
 }, {
     "unique": true
 });

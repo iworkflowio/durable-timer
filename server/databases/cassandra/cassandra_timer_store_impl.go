@@ -46,6 +46,9 @@ func (c *CassandraTimerStore) Close() error {
 func (c *CassandraTimerStore) ClaimShardOwnership(
 	ctx context.Context, shardId int, ownerId string, metadata interface{},
 ) (shardVersion int64, retErr *databases.DbError) {
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+
 	// Serialize metadata to JSON
 	var metadataJSON string
 	if metadata != nil {
@@ -74,10 +77,10 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 		// Shard doesn't exist, create it with version 1
 		newVersion := int64(1)
 
-		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, shard_version, shard_owner_id, shard_claimed_at, shard_metadata) 
-		                VALUES (?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`
+		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, shard_version, shard_owner_id, shard_claimed_at, shard_metadata) 
+		                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`
 
-		applied, err := c.session.Query(insertQuery, shardId, databases.RowTypeShard, databases.ZeroTimestamp, databases.ZeroUUID, newVersion, ownerId, now, metadataJSON).
+		applied, err := c.session.Query(insertQuery, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, newVersion, ownerId, now, metadataJSON).
 			WithContext(ctx).MapScanCAS(previous)
 
 		if err != nil {
@@ -103,10 +106,10 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	// Update the shard with new version and ownership using optimistic concurrency control
 	newVersion := currentVersion + 1
 	updateQuery := `UPDATE timers SET shard_version = ?, shard_owner_id = ?, shard_claimed_at = ?, shard_metadata = ? 
-	                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF shard_version = ?`
+	                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
 
 	applied, err := c.session.Query(updateQuery, newVersion, ownerId, now, metadataJSON,
-		shardId, databases.RowTypeShard, databases.ZeroTimestamp, databases.ZeroUUID, currentVersion).
+		shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, currentVersion).
 		WithContext(ctx).MapScanCAS(previous)
 
 	if err != nil {
@@ -126,11 +129,11 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 }
 
 func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	// Use the provided timer UUID for consistent upsert behavior
-	timerUUID, parseErr := gocql.ParseUUID(timer.TimerUuid)
-	if parseErr != nil {
-		return databases.NewGenericDbError("failed to parse timer UUID", parseErr)
-	}
+	// Convert the provided timer UUID to high/low format for predictable pagination
+	timerUuidHigh, timerUuidLow, _ := databases.UuidToHighLow(timer.TimerUuid)
+
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON string
@@ -155,16 +158,17 @@ func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shar
 	batch := c.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
 
 	// Add shard version check to batch - update shard version to same value to verify it matches
-	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF shard_version = ?`
-	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, databases.ZeroUUID, shardVersion)
+	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
+	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
 
 	// Add timer insertion to batch
-	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	batch.Query(insertQuery,
 		shardId,
 		databases.RowTypeTimer,
 		timer.ExecuteAt,
-		timerUUID,
+		timerUuidHigh,
+		timerUuidLow,
 		timer.Id,
 		timer.Namespace,
 		timer.CallbackUrl,
@@ -205,11 +209,8 @@ func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shar
 }
 
 func (c *CassandraTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	// Use the provided timer UUID for consistent upsert behavior
-	timerUUID, parseErr := gocql.ParseUUID(timer.TimerUuid)
-	if parseErr != nil {
-		return databases.NewGenericDbError("failed to parse timer UUID", parseErr)
-	}
+	// Convert the provided timer UUID to high/low format for predictable pagination
+	timerUuidHigh, timerUuidLow, _ := databases.UuidToHighLow(timer.TimerUuid)
 
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON string
@@ -231,13 +232,14 @@ func (c *CassandraTimerStore) CreateTimerNoLock(ctx context.Context, shardId int
 	}
 
 	// Insert the timer directly without any locking or version checking
-	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	insertErr := c.session.Query(insertQuery,
 		shardId,
 		databases.RowTypeTimer,
 		timer.ExecuteAt,
-		timerUUID,
+		timerUuidHigh,
+		timerUuidLow,
 		timer.Id,
 		timer.Namespace,
 		timer.CallbackUrl,
