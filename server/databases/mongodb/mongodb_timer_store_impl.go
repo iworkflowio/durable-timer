@@ -86,13 +86,15 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Serialize metadata to JSON
-	var metadataJSON string
+	var metadataJSON interface{}
 	if metadata != nil {
 		metadataBytes, err := json.Marshal(metadata)
 		if err != nil {
 			return 0, databases.NewGenericDbError("failed to marshal metadata", err)
 		}
 		metadataJSON = string(metadataBytes)
+	} else {
+		metadataJSON = nil
 	}
 
 	now := time.Now().UTC()
