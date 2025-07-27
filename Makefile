@@ -16,3 +16,4 @@ api-code-gen-server: #generate/refresh go server code for api.yaml, do this afte
 #api-code-gen-py: #generate/refresh python apis
 #	rm -Rf ./pyapi/* ; true
 #	java -jar openapi-generator-cli-7.14.0.jar generate -i api.yaml -g python -o ./pyapi -p packageVersion=0.0.3 -p packageName=xcherryapi --git-user-id xcherryio --git-repo-id apis
+

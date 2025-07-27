@@ -30,7 +30,7 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 	}
 
 	// Convert ZeroUUID to high/low format for test queries
-	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Claim ownership of a new shard
 	version, err := store.ClaimShardOwnership(ctx, shardId, ownerId, metadata)
@@ -78,7 +78,7 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 	assert.Equal(t, int64(3), version3)
 
 	// Convert ZeroUUID to high/low format for test queries
-	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Verify final state
 	var dbVersion int64
@@ -153,7 +153,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 	assert.Greater(t, maxVersion, int64(0), "Maximum version should be positive")
 
 	// Convert ZeroUUID to high/low format for test queries
-	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Verify final database state
 	var dbVersion int64
@@ -181,7 +181,7 @@ func TestClaimShardOwnership_NilMetadata(t *testing.T) {
 	assert.Equal(t, int64(1), version)
 
 	// Convert ZeroUUID to high/low format for test queries
-	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Verify metadata is empty/null in database
 	var dbMetadata *string
@@ -223,7 +223,7 @@ func TestClaimShardOwnership_ComplexMetadata(t *testing.T) {
 	assert.Equal(t, int64(1), version)
 
 	// Convert ZeroUUID to high/low format for test queries
-	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Verify metadata is properly serialized
 	var dbMetadata string

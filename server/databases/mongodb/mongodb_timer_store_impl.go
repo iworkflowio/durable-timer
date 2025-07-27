@@ -83,16 +83,18 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 	ctx context.Context, shardId int, ownerId string, metadata interface{},
 ) (shardVersion int64, retErr *databases.DbError) {
 	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Serialize metadata to JSON
-	var metadataJSON string
+	var metadataJSON interface{}
 	if metadata != nil {
 		metadataBytes, err := json.Marshal(metadata)
 		if err != nil {
 			return 0, databases.NewGenericDbError("failed to marshal metadata", err)
 		}
 		metadataJSON = string(metadataBytes)
+	} else {
+		metadataJSON = nil
 	}
 
 	now := time.Now().UTC()
@@ -243,10 +245,10 @@ func isDuplicateKeyError(err error) bool {
 
 func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
 	// Convert the provided timer UUID to high/low format for predictable pagination
-	timerUuidHigh, timerUuidLow, _ := databases.UuidToHighLow(timer.TimerUuid)
+	timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timer.TimerUuid)
 
 	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON interface{}
@@ -381,7 +383,7 @@ func (m *MongoDBTimerStore) buildTimerDocumentForUpsert(shardId int, timer *data
 
 func (m *MongoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
 	// Convert the provided timer UUID to high/low format for predictable pagination
-	timerUuidHigh, timerUuidLow, _ := databases.UuidToHighLow(timer.TimerUuid)
+	timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timer.TimerUuid)
 
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON interface{}

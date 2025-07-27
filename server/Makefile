@@ -103,3 +103,41 @@ help:
 	@echo "  dev               - Run with live reload (requires air)"
 	@echo "  docker            - Build Docker image"
 	@echo "  help              - Show this help message" 
+
+
+ci-cassandra-integ-test:
+	$Q go test -v ./databases/cassandra -cover -coverprofile coverage.cassandra.out -coverpkg ./databases/...
+
+ci-mongodb-integ-test:
+	$Q go test -v ./databases/mongodb -cover -coverprofile coverage.mongodb.out -coverpkg ./databases/...
+
+ci-mysql-integ-test:
+	$Q go test -v ./databases/mysql -cover -coverprofile coverage.mysql.out -coverpkg ./databases/...
+
+ci-postgresql-integ-test:
+	$Q go test -v ./databases/postgresql -cover -coverprofile coverage.postgresql.out -coverpkg ./databases/...
+
+ci-dynamodb-integ-test:
+	$Q go test -v ./databases/dynamodb -cover -coverprofile coverage.dynamodb.out -coverpkg ./databases/...
+
+integ-cassandra-test:
+	$Q go test -v ./databases/cassandra
+
+integ-mongodb-test:
+	$Q go test -v ./databases/mongodb
+
+integ-mysql-test:
+	$Q go test -v ./databases/mysql
+
+integ-postgresql-test:
+	$Q go test -v ./databases/postgresql
+
+integ-dynamodb-test:
+	$Q go test -v ./databases/dynamodb
+
+integ-test-all:
+	$Q go test -v ./databases/cassandra
+	$Q go test -v ./databases/mongodb
+	$Q go test -v ./databases/mysql
+	$Q go test -v ./databases/postgresql
+	$Q go test -v ./databases/dynamodb

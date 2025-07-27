@@ -62,7 +62,7 @@ func (m *MySQLTimerStore) ClaimShardOwnership(
 	ctx context.Context, shardId int, ownerId string, metadata interface{},
 ) (shardVersion int64, retErr *databases.DbError) {
 	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Serialize metadata to JSON
 	var metadataJSON interface{}
@@ -173,10 +173,10 @@ func isDuplicateKeyError(err error) bool {
 
 func (m *MySQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
 	// Convert the provided timer UUID to high/low format for predictable pagination
-	timerUuidHigh, timerUuidLow, _ := databases.UuidToHighLow(timer.TimerUuid)
+	timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timer.TimerUuid)
 
 	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow, _ := databases.UuidToHighLow(databases.ZeroUUID)
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON interface{}
@@ -269,7 +269,7 @@ func (m *MySQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVer
 
 func (m *MySQLTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
 	// Convert the provided timer UUID to high/low format for predictable pagination
-	timerUuidHigh, timerUuidLow, _ := databases.UuidToHighLow(timer.TimerUuid)
+	timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timer.TimerUuid)
 
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON interface{}
