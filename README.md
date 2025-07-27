@@ -19,6 +19,3 @@ A highly scalable, performant and distributed durable timer service
 * [x] DynamoDB
 * [x] MySQL
 * [x] PostgreSQL
-* [ ] TiDB: TODO
-* [ ] MS SQL Server: TODO
-* [ ] Oracle DB: TODO

@@ -52,6 +52,10 @@ This document describes the design decisions and rationale behind the Distribute
 
 ### Callback Response Protocol
 
+Return 4xx means invalid timer and no retry.
+Return 200 with ok == true means success and no retry.
+Otherwise will retry, if retryPolicy is provided on timer creation.
+
 **CallbackResponse Schema**:
 ```json
 {

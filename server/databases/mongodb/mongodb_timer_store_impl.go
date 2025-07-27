@@ -26,14 +26,28 @@ type MongoDBTimerStore struct {
 func NewMongoDBTimerStore(config *config.MongoDBConnectConfig) (databases.TimerStore, error) {
 	// Build connection URI - use replica set config only for non-localhost connections
 	var uri string
+
+	// Check if authentication is configured
+	hasAuth := config.Username != "" && config.Password != "" && config.AuthDatabase != ""
+
 	if config.Host == "localhost" || config.Host == "127.0.0.1" {
 		// For localhost connections (testing), use direct connection to bypass replica set discovery
-		uri = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s?authSource=%s&directConnection=true",
-			config.Username, config.Password, config.Host, config.Port, config.Database, config.AuthDatabase)
+		if hasAuth {
+			uri = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s?authSource=%s&directConnection=true",
+				config.Username, config.Password, config.Host, config.Port, config.Database, config.AuthDatabase)
+		} else {
+			uri = fmt.Sprintf("mongodb://%s:%d/%s?directConnection=true",
+				config.Host, config.Port, config.Database)
+		}
 	} else {
 		// For production, use replica set configuration for transactions
-		uri = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s?authSource=%s&replicaSet=timer-rs&readConcern=majority&w=majority",
-			config.Username, config.Password, config.Host, config.Port, config.Database, config.AuthDatabase)
+		if hasAuth {
+			uri = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s?authSource=%s&replicaSet=timer-rs&readConcern=majority&w=majority",
+				config.Username, config.Password, config.Host, config.Port, config.Database, config.AuthDatabase)
+		} else {
+			uri = fmt.Sprintf("mongodb://%s:%d/%s?replicaSet=timer-rs&readConcern=majority&w=majority",
+				config.Host, config.Port, config.Database)
+		}
 	}
 
 	// Configure client options

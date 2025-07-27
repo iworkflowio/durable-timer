@@ -232,7 +232,7 @@ components:
         callbackUrl:
           type: string
           format: uri
-          description: HTTP URL to call when the timer executes, returning 200 with CallbackResponse means success, otherwise will be retried.
+          description: HTTP URL to call when the timer executes, returning 200 with CallbackResponse means success, 4xx means invalid timer and no retry, otherwise will be retried.
           example: "https://api.example.com/webhooks/timer"
           maxLength: 2048
         payload:
@@ -283,7 +283,7 @@ components:
         callbackUrl:
           type: string
           format: uri
-          description: New callback URL, returning 200 with CallbackResponse means success, otherwise will be retried.
+          description: New callback URL, returning 200 with CallbackResponse means success, 4xx means invalid timer and no retry, otherwise will be retried.
           example: "https://api.example.com/webhooks/timer-updated"
           maxLength: 2048
         payload:
@@ -322,7 +322,7 @@ components:
         callbackUrl:
           type: string
           format: uri
-          description: HTTP URL to call when executing, returning 200 with CallbackResponse means success, otherwise will be retried.
+          description: HTTP URL to call when executing, returning 200 with CallbackResponse means success, 4xx means invalid timer and no retry, otherwise will be retried.
           example: "https://api.example.com/webhooks/timer"
         payload:
           type: object
