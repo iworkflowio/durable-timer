@@ -21,9 +21,9 @@ const (
 	testHost         = "localhost"
 	testPort         = 27017
 	testDatabase     = "timer_service_test"
-	testUsername     = "root"
-	testPassword     = "mongodb_root_password"
-	testAuthDatabase = "admin"
+	testUsername     = "" // No authentication in test setup
+	testPassword     = "" // No authentication in test setup
+	testAuthDatabase = "" // No authentication in test setup
 )
 
 func getTestHost() string {
@@ -54,9 +54,6 @@ func executeSchemaFileWithMongosh() error {
 
 	// Use docker exec to run mongosh inside the MongoDB container
 	cmd := exec.Command("docker", "exec", "timer-service-mongodb-dev", "mongosh",
-		"--username", testUsername,
-		"--password", testPassword,
-		"--authenticationDatabase", testAuthDatabase,
 		testDatabase,
 		"--eval", string(contentBytes))
 
@@ -106,9 +103,9 @@ func setupTestStore(t *testing.T) (*MongoDBTimerStore, func()) {
 }
 
 func createTestDatabase() error {
-	// Connect as root user with direct connection for localhost testing
-	uri := fmt.Sprintf("mongodb://%s:%s@%s:%d/?authSource=%s&directConnection=true",
-		testUsername, testPassword, getTestHost(), testPort, testAuthDatabase)
+	// Connect without authentication for development/CI setup
+	uri := fmt.Sprintf("mongodb://%s:%d/?directConnection=true",
+		getTestHost(), testPort)
 
 	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(uri))
 	if err != nil {

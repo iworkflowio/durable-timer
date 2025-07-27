@@ -4,16 +4,13 @@ services:
   mongodb:
     image: mongo:7
     container_name: timer-service-mongodb-dev
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: mongodb_root_password
-      MONGO_INITDB_DATABASE: timer_service
     ports:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
     networks:
       - timer-network
+    command: ["mongod", "--replSet", "timer-rs", "--bind_ip_all", "--noauth"]
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
       timeout: 20s
@@ -31,30 +28,35 @@ services:
     entrypoint: >
       sh -c "
         echo 'Waiting for MongoDB to be ready...' &&
-        until mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval 'db.runCommand({ping:1})' --quiet; do
+        until mongosh --host mongodb --eval 'db.runCommand({ping:1})' --quiet; do
           echo 'MongoDB not ready, waiting...'
           sleep 2
         done &&
-        echo 'Adding replica set configuration...' &&
-        mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval '
+        echo 'Initializing replica set...' &&
+        mongosh --host mongodb --eval '
           try {
-            result = rs.initiate({
+            rs.initiate({
               _id: \"timer-rs\",
               members: [
                 { _id: 0, host: \"mongodb:27017\" }
               ]
             });
-            print(\"Replica set initiation result:\", JSON.stringify(result));
+            print(\"Replica set initialized successfully\");
           } catch (e) {
-            if (e.code === 23 || e.message.includes(\"already initialized\") || e.message.includes(\"not started with replication enabled\")) {
-              print(\"Note: Replica set configuration skipped. MongoDB running in standalone mode for CI.\");
+            if (e.code === 23 || e.message.includes(\"already initialized\")) {
+              print(\"Replica set already initialized\");
             } else {
               print(\"Error initializing replica set:\", e);
               throw e;
             }
           }
         ' &&
-        echo 'MongoDB setup completed successfully!'
+        echo 'Waiting for replica set to become ready...' &&
+        until mongosh --host mongodb --eval 'rs.status().ok' --quiet; do
+          echo 'Replica set not ready, waiting...'
+          sleep 2
+        done &&
+        echo 'MongoDB replica set setup completed successfully!'
       "
 
   mongodb-init:
@@ -69,30 +71,22 @@ services:
     entrypoint: >
       sh -c "
         echo 'Waiting for MongoDB to be ready...' &&
-        until mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval 'db.runCommand({ping:1}).ok' --quiet; do
+        until mongosh --host mongodb --eval 'db.runCommand({ping:1}).ok' --quiet; do
           echo 'MongoDB not ready, waiting...'
           sleep 2
         done &&
         echo 'Creating timer_service database and user...' &&
-        mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval '
+        mongosh --host mongodb --eval '
           use timer_service;
-          try {
-            db.createUser({
-              user: \"timer_user\",
-              pwd: \"timer_password\", 
-              roles: [{role: \"readWrite\", db: \"timer_service\"}]
-            });
-            print(\"User timer_user created successfully\");
-          } catch (e) {
-            if (e.code === 51003) {
-              print(\"User timer_user already exists\");
-            } else {
-              throw e;
-            }
-          }
+          db.createUser({
+            user: \"timer_user\",
+            pwd: \"timer_password\", 
+            roles: [{role: \"readWrite\", db: \"timer_service\"}]
+          });
+          print(\"User timer_user created successfully\");
         ' &&
-        echo 'Executing schema with root user...' &&
-        mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin timer_service < /schema/v1.js &&
+        echo 'Executing schema from v1.js...' &&
+        mongosh --host mongodb timer_service < /schema/v1.js &&
         echo 'Schema execution completed successfully!'
       "
 
