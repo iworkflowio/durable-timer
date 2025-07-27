@@ -2,26 +2,16 @@ package mongodb
 
 import (
 	"context"
-	"crypto/md5"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/iworkflowio/durable-timer/databases"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/bson"
 )
-
-// generateTimerUUID creates a stable UUID from timer namespace and ID for consistent upsert behavior
-func generateTimerUUID(namespace, timerId string) uuid.UUID {
-	// Create a deterministic UUID based on namespace and timer ID
-	hash := md5.Sum([]byte(fmt.Sprintf("%s:%s", namespace, timerId)))
-	uuid, _ := uuid.FromBytes(hash[:])
-	return uuid
-}
 
 func TestCreateTimer_Basic(t *testing.T) {
 	store, cleanup := setupTestStore(t)
@@ -40,7 +30,7 @@ func TestCreateTimer_Basic(t *testing.T) {
 	// Create a timer
 	timer := &databases.DbTimer{
 		Id:                     "timer-1",
-		TimerUuid:              generateTimerUUID(namespace, "timer-1"),
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "timer-1"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
 		CallbackUrl:            "https://example.com/callback",
@@ -93,7 +83,7 @@ func TestCreateTimer_WithPayload(t *testing.T) {
 
 	timer := &databases.DbTimer{
 		Id:                     "timer-with-payload",
-		TimerUuid:              generateTimerUUID(namespace, "timer-with-payload"),
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "timer-with-payload"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(10 * time.Minute),
 		CallbackUrl:            "https://example.com/callback",
@@ -146,7 +136,7 @@ func TestCreateTimer_WithRetryPolicy(t *testing.T) {
 
 	timer := &databases.DbTimer{
 		Id:                     "timer-with-retry",
-		TimerUuid:              generateTimerUUID(namespace, "timer-with-retry"),
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "timer-with-retry"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(15 * time.Minute),
 		CallbackUrl:            "https://example.com/callback",
@@ -190,7 +180,7 @@ func TestCreateTimer_ShardVersionMismatch(t *testing.T) {
 
 	timer := &databases.DbTimer{
 		Id:                     "timer-version-mismatch",
-		TimerUuid:              generateTimerUUID(namespace, "timer-version-mismatch"),
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "timer-version-mismatch"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
 		CallbackUrl:            "https://example.com/callback",
@@ -244,7 +234,7 @@ func TestCreateTimer_ConcurrentCreation(t *testing.T) {
 			defer wg.Done()
 			timer := &databases.DbTimer{
 				Id:                     fmt.Sprintf("concurrent-timer-%d", idx),
-				TimerUuid:              generateTimerUUID(namespace, fmt.Sprintf("concurrent-timer-%d", idx)),
+				TimerUuid:              databases.GenerateTimerUUID(namespace, fmt.Sprintf("concurrent-timer-%d", idx)),
 				Namespace:              namespace,
 				ExecuteAt:              time.Now().Add(time.Duration(idx) * time.Minute),
 				CallbackUrl:            fmt.Sprintf("https://example.com/callback/%d", idx),
@@ -291,7 +281,7 @@ func TestCreateTimer_NoShardRecord(t *testing.T) {
 	// Don't claim the shard first - no shard record exists
 	timer := &databases.DbTimer{
 		Id:                     "timer-no-shard",
-		TimerUuid:              generateTimerUUID(namespace, "timer-no-shard"),
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "timer-no-shard"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
 		CallbackUrl:            "https://example.com/callback",
@@ -318,7 +308,7 @@ func TestCreateTimerNoLock_Basic(t *testing.T) {
 	// Create a basic timer without needing shard ownership
 	timer := &databases.DbTimer{
 		Id:                     "timer-nolock-1",
-		TimerUuid:              generateTimerUUID(namespace, "timer-nolock-1"),
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "timer-nolock-1"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
 		CallbackUrl:            "https://example.com/callback",
@@ -367,7 +357,7 @@ func TestCreateTimerNoLock_WithPayload(t *testing.T) {
 
 	timer := &databases.DbTimer{
 		Id:                     "timer-nolock-payload",
-		TimerUuid:              generateTimerUUID(namespace, "timer-nolock-payload"),
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "timer-nolock-payload"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(10 * time.Minute),
 		CallbackUrl:            "https://example.com/nolock/callback",
@@ -416,7 +406,7 @@ func TestCreateTimerNoLock_WithRetryPolicy(t *testing.T) {
 
 	timer := &databases.DbTimer{
 		Id:                     "timer-nolock-retry",
-		TimerUuid:              generateTimerUUID(namespace, "timer-nolock-retry"),
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "timer-nolock-retry"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(15 * time.Minute),
 		CallbackUrl:            "https://example.com/nolock/retry",
@@ -457,7 +447,7 @@ func TestCreateTimerNoLock_NilPayloadAndRetryPolicy(t *testing.T) {
 	// Create timer with nil payload and retry policy
 	timer := &databases.DbTimer{
 		Id:                     "timer-nolock-nil-fields",
-		TimerUuid:              generateTimerUUID(namespace, "timer-nolock-nil-fields"),
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "timer-nolock-nil-fields"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
 		CallbackUrl:            "https://example.com/nolock/nil",
@@ -501,7 +491,7 @@ func TestCreateTimerNoLock_InvalidPayloadSerialization(t *testing.T) {
 	// Create timer with non-serializable payload (function type)
 	timer := &databases.DbTimer{
 		Id:                     "timer-nolock-invalid-payload",
-		TimerUuid:              generateTimerUUID(namespace, "timer-nolock-invalid-payload"),
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "timer-nolock-invalid-payload"),
 		Namespace:              namespace,
 		ExecuteAt:              time.Now().Add(5 * time.Minute),
 		CallbackUrl:            "https://example.com/nolock/invalid",
@@ -536,7 +526,7 @@ func TestCreateTimerNoLock_ConcurrentCreation(t *testing.T) {
 			defer wg.Done()
 			timer := &databases.DbTimer{
 				Id:                     fmt.Sprintf("concurrent-nolock-timer-%d", idx),
-				TimerUuid:              generateTimerUUID(namespace, fmt.Sprintf("concurrent-nolock-timer-%d", idx)),
+				TimerUuid:              databases.GenerateTimerUUID(namespace, fmt.Sprintf("concurrent-nolock-timer-%d", idx)),
 				Namespace:              namespace,
 				ExecuteAt:              time.Now().Add(time.Duration(idx) * time.Minute),
 				CallbackUrl:            fmt.Sprintf("https://example.com/nolock/callback/%d", idx),
@@ -580,8 +570,8 @@ func TestCreateTimer_DuplicateTimerOverwrite(t *testing.T) {
 	shardId := 1
 	namespace := "test_namespace"
 	timerId := "duplicate-timer"
-	baseUuid := generateTimerUUID(namespace, timerId)
-	alternateUuid := generateTimerUUID(namespace, timerId+"_alt")
+	baseUuid := databases.GenerateTimerUUID(namespace, timerId)
+	alternateUuid := databases.GenerateTimerUUID(namespace, timerId+"_alt")
 
 	// Create shard record
 	ownerId := "owner-1"
