@@ -321,8 +321,87 @@ func (m *MySQLTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, na
 }
 
 func (c *MySQLTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+	// Query timers up to the specified timestamp, ordered by execution time
+	query := `SELECT shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low,
+	                 timer_id, timer_namespace, timer_callback_url, timer_payload, 
+	                 timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts
+	          FROM timers 
+	          WHERE shard_id = ? AND row_type = ? AND timer_execute_at <= ?
+	          ORDER BY timer_execute_at ASC, timer_uuid_high ASC, timer_uuid_low ASC
+	          LIMIT ?`
+
+	rows, err := c.db.QueryContext(ctx, query, shardId, databases.RowTypeTimer, request.UpToTimestamp, request.Limit)
+	if err != nil {
+		return nil, databases.NewGenericDbError("failed to query timers", err)
+	}
+	defer rows.Close()
+
+	var timers []*databases.DbTimer
+
+	for rows.Next() {
+		var (
+			dbShardId                  int
+			dbRowType                  int16
+			dbTimerExecuteAt           time.Time
+			dbTimerUuidHigh            int64
+			dbTimerUuidLow             int64
+			dbTimerId                  string
+			dbTimerNamespace           string
+			dbTimerCallbackUrl         string
+			dbTimerPayload             sql.NullString
+			dbTimerRetryPolicy         sql.NullString
+			dbTimerCallbackTimeoutSecs int32
+			dbTimerCreatedAt           time.Time
+			dbTimerAttempts            int32
+		)
+
+		if err := rows.Scan(&dbShardId, &dbRowType, &dbTimerExecuteAt, &dbTimerUuidHigh, &dbTimerUuidLow,
+			&dbTimerId, &dbTimerNamespace, &dbTimerCallbackUrl, &dbTimerPayload,
+			&dbTimerRetryPolicy, &dbTimerCallbackTimeoutSecs, &dbTimerCreatedAt, &dbTimerAttempts); err != nil {
+			return nil, databases.NewGenericDbError("failed to scan timer row", err)
+		}
+
+		// Convert UUID high/low back to UUID
+		timerUuid := databases.HighLowToUuid(dbTimerUuidHigh, dbTimerUuidLow)
+
+		// Parse JSON payload and retry policy
+		var payload interface{}
+		var retryPolicy interface{}
+
+		if dbTimerPayload.Valid && dbTimerPayload.String != "" {
+			if err := json.Unmarshal([]byte(dbTimerPayload.String), &payload); err != nil {
+				return nil, databases.NewGenericDbError("failed to unmarshal timer payload", err)
+			}
+		}
+
+		if dbTimerRetryPolicy.Valid && dbTimerRetryPolicy.String != "" {
+			if err := json.Unmarshal([]byte(dbTimerRetryPolicy.String), &retryPolicy); err != nil {
+				return nil, databases.NewGenericDbError("failed to unmarshal timer retry policy", err)
+			}
+		}
+
+		timer := &databases.DbTimer{
+			Id:                     dbTimerId,
+			TimerUuid:              timerUuid,
+			Namespace:              dbTimerNamespace,
+			ExecuteAt:              dbTimerExecuteAt,
+			CallbackUrl:            dbTimerCallbackUrl,
+			Payload:                payload,
+			RetryPolicy:            retryPolicy,
+			CallbackTimeoutSeconds: dbTimerCallbackTimeoutSecs,
+			CreatedAt:              dbTimerCreatedAt,
+		}
+
+		timers = append(timers, timer)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, databases.NewGenericDbError("failed to iterate over timer rows", err)
+	}
+
+	return &databases.RangeGetTimersResponse{
+		Timers: timers,
+	}, nil
 }
 
 func (c *MySQLTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {

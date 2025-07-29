@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/smithy-go"
+	"github.com/google/uuid"
 	appconfig "github.com/iworkflowio/durable-timer/config"
 	"github.com/iworkflowio/durable-timer/databases"
 )
@@ -423,9 +424,97 @@ func (d *DynamoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int,
 	return nil
 }
 
-func (c *DynamoDBTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+func (d *DynamoDBTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
+	// Create upper bound for execute_at_with_uuid comparison
+	upperBound := databases.FormatExecuteAtWithUuid(request.UpToTimestamp, "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz")
+
+	// Query using the ExecuteAtWithUuidIndex LSI
+	queryInput := &dynamodb.QueryInput{
+		TableName:              aws.String(d.tableName),
+		IndexName:              aws.String("ExecuteAtWithUuidIndex"),
+		KeyConditionExpression: aws.String("shard_id = :shard_id AND timer_execute_at_with_uuid <= :upper_bound"),
+		FilterExpression:       aws.String("row_type = :timer_row_type"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":shard_id":       &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+			":upper_bound":    &types.AttributeValueMemberS{Value: upperBound},
+			":timer_row_type": &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeTimer))},
+		},
+		Limit:            aws.Int32(int32(request.Limit)),
+		ScanIndexForward: aws.Bool(true), // Sort ascending by timer_execute_at_with_uuid
+	}
+
+	result, err := d.client.Query(ctx, queryInput)
+	if err != nil {
+		return nil, databases.NewGenericDbError("failed to query timers", err)
+	}
+
+	var timers []*databases.DbTimer
+
+	for _, item := range result.Items {
+		// Parse timer_execute_at_with_uuid to get individual execute_at and uuid
+		executeAtWithUuidStr := item["timer_execute_at_with_uuid"].(*types.AttributeValueMemberS).Value
+		executeAt, timerUuidStr, parseErr := databases.ParseExecuteAtWithUuid(executeAtWithUuidStr)
+		if parseErr != nil {
+			return nil, databases.NewGenericDbError("failed to parse timer_execute_at_with_uuid", parseErr)
+		}
+
+		// Parse timer UUID
+		timerUuid, uuidErr := uuid.Parse(timerUuidStr)
+		if uuidErr != nil {
+			return nil, databases.NewGenericDbError("failed to parse timer UUID", uuidErr)
+		}
+
+		// Parse other fields
+		timerId := item["timer_id"].(*types.AttributeValueMemberS).Value
+		timerNamespace := item["timer_namespace"].(*types.AttributeValueMemberS).Value
+		callbackUrl := item["timer_callback_url"].(*types.AttributeValueMemberS).Value
+
+		timeoutSecondsStr := item["timer_callback_timeout_seconds"].(*types.AttributeValueMemberN).Value
+		timeoutSeconds, _ := strconv.Atoi(timeoutSecondsStr)
+
+		createdAtStr := item["timer_created_at"].(*types.AttributeValueMemberS).Value
+		createdAt, _ := time.Parse(time.RFC3339Nano, createdAtStr)
+
+		// Parse JSON payload and retry policy
+		var payload interface{}
+		var retryPolicy interface{}
+
+		if payloadAttr, exists := item["timer_payload"]; exists {
+			payloadStr := payloadAttr.(*types.AttributeValueMemberS).Value
+			if payloadStr != "" {
+				if err := json.Unmarshal([]byte(payloadStr), &payload); err != nil {
+					return nil, databases.NewGenericDbError("failed to unmarshal timer payload", err)
+				}
+			}
+		}
+
+		if retryPolicyAttr, exists := item["timer_retry_policy"]; exists {
+			retryPolicyStr := retryPolicyAttr.(*types.AttributeValueMemberS).Value
+			if retryPolicyStr != "" {
+				if err := json.Unmarshal([]byte(retryPolicyStr), &retryPolicy); err != nil {
+					return nil, databases.NewGenericDbError("failed to unmarshal timer retry policy", err)
+				}
+			}
+		}
+
+		timer := &databases.DbTimer{
+			Id:                     timerId,
+			TimerUuid:              timerUuid,
+			Namespace:              timerNamespace,
+			ExecuteAt:              executeAt,
+			CallbackUrl:            callbackUrl,
+			Payload:                payload,
+			RetryPolicy:            retryPolicy,
+			CallbackTimeoutSeconds: int32(timeoutSeconds),
+			CreatedAt:              createdAt,
+		}
+
+		timers = append(timers, timer)
+	}
+
+	return &databases.RangeGetTimersResponse{
+		Timers: timers,
+	}, nil
 }
 
 func (c *DynamoDBTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {

@@ -440,8 +440,79 @@ func (m *MongoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, 
 }
 
 func (c *MongoDBTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+	// Query timers up to the specified timestamp, ordered by execution time
+	filter := bson.M{
+		"shard_id":         shardId,
+		"row_type":         databases.RowTypeTimer,
+		"timer_execute_at": bson.M{"$lte": request.UpToTimestamp},
+	}
+
+	// Create find options with sorting and limit
+	findOptions := options.Find().
+		SetSort(bson.D{
+			{"timer_execute_at", 1},
+			{"timer_uuid_high", 1},
+			{"timer_uuid_low", 1},
+		}).
+		SetLimit(int64(request.Limit))
+
+	cursor, err := c.collection.Find(ctx, filter, findOptions)
+	if err != nil {
+		return nil, databases.NewGenericDbError("failed to query timers", err)
+	}
+	defer cursor.Close(ctx)
+
+	var timers []*databases.DbTimer
+
+	for cursor.Next(ctx) {
+		var doc bson.M
+		if err := cursor.Decode(&doc); err != nil {
+			return nil, databases.NewGenericDbError("failed to decode timer document", err)
+		}
+
+		// Convert UUID high/low back to UUID
+		timerUuidHigh := doc["timer_uuid_high"].(int64)
+		timerUuidLow := doc["timer_uuid_low"].(int64)
+		timerUuid := databases.HighLowToUuid(timerUuidHigh, timerUuidLow)
+
+		// Parse JSON payload and retry policy
+		var payload interface{}
+		var retryPolicy interface{}
+
+		if payloadStr, ok := doc["timer_payload"].(string); ok && payloadStr != "" {
+			if err := json.Unmarshal([]byte(payloadStr), &payload); err != nil {
+				return nil, databases.NewGenericDbError("failed to unmarshal timer payload", err)
+			}
+		}
+
+		if retryPolicyStr, ok := doc["timer_retry_policy"].(string); ok && retryPolicyStr != "" {
+			if err := json.Unmarshal([]byte(retryPolicyStr), &retryPolicy); err != nil {
+				return nil, databases.NewGenericDbError("failed to unmarshal timer retry policy", err)
+			}
+		}
+
+		timer := &databases.DbTimer{
+			Id:                     doc["timer_id"].(string),
+			TimerUuid:              timerUuid,
+			Namespace:              doc["timer_namespace"].(string),
+			ExecuteAt:              doc["timer_execute_at"].(primitive.DateTime).Time(),
+			CallbackUrl:            doc["timer_callback_url"].(string),
+			Payload:                payload,
+			RetryPolicy:            retryPolicy,
+			CallbackTimeoutSeconds: doc["timer_callback_timeout_seconds"].(int32),
+			CreatedAt:              doc["timer_created_at"].(primitive.DateTime).Time(),
+		}
+
+		timers = append(timers, timer)
+	}
+
+	if err := cursor.Err(); err != nil {
+		return nil, databases.NewGenericDbError("cursor iteration failed", err)
+	}
+
+	return &databases.RangeGetTimersResponse{
+		Timers: timers,
+	}, nil
 }
 
 func (c *MongoDBTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
