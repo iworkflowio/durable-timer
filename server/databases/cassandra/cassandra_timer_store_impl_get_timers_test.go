@@ -69,7 +69,7 @@ func TestGetTimersUpToTimestamp_Basic(t *testing.T) {
 		Limit:         10,
 	}
 
-	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, namespace, request)
+	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, request)
 	require.Nil(t, getErr)
 	require.NotNil(t, response)
 	require.Len(t, response.Timers, 2)
@@ -116,7 +116,7 @@ func TestGetTimersUpToTimestamp_WithLimit(t *testing.T) {
 		Limit:         3,
 	}
 
-	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, namespace, request)
+	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, request)
 	require.Nil(t, getErr)
 	require.NotNil(t, response)
 	assert.Len(t, response.Timers, 3)
@@ -172,7 +172,7 @@ func TestGetTimersUpToTimestamp_WithPayloadAndRetryPolicy(t *testing.T) {
 		Limit:         10,
 	}
 
-	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, namespace, request)
+	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, request)
 	require.Nil(t, getErr)
 	require.NotNil(t, response)
 	require.Len(t, response.Timers, 1)
@@ -205,7 +205,6 @@ func TestGetTimersUpToTimestamp_EmptyResult(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 1
-	namespace := "test_namespace"
 
 	// Create shard record but no timers
 	ownerId := "owner-1"
@@ -218,64 +217,10 @@ func TestGetTimersUpToTimestamp_EmptyResult(t *testing.T) {
 		Limit:         10,
 	}
 
-	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, namespace, request)
+	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, request)
 	require.Nil(t, getErr)
 	require.NotNil(t, response)
 	assert.Len(t, response.Timers, 0)
-}
-
-func TestGetTimersUpToTimestamp_DifferentNamespaces(t *testing.T) {
-	store, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	shardId := 1
-	namespace1 := "namespace1"
-	namespace2 := "namespace2"
-
-	// Create shard record
-	ownerId := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
-	require.Nil(t, err)
-
-	// Create timers in different namespaces
-	baseTime := time.Now().Truncate(time.Second)
-	timer1 := &databases.DbTimer{
-		Id:                     "timer-1",
-		TimerUuid:              databases.GenerateTimerUUID(namespace1, "timer-1"),
-		Namespace:              namespace1,
-		ExecuteAt:              baseTime.Add(1 * time.Minute),
-		CallbackUrl:            "https://example.com/callback1",
-		CallbackTimeoutSeconds: 30,
-		CreatedAt:              baseTime,
-	}
-	timer2 := &databases.DbTimer{
-		Id:                     "timer-2",
-		TimerUuid:              databases.GenerateTimerUUID(namespace2, "timer-2"),
-		Namespace:              namespace2,
-		ExecuteAt:              baseTime.Add(1 * time.Minute),
-		CallbackUrl:            "https://example.com/callback2",
-		CallbackTimeoutSeconds: 30,
-		CreatedAt:              baseTime,
-	}
-
-	createErr1 := store.CreateTimer(ctx, shardId, shardVersion, namespace1, timer1)
-	require.Nil(t, createErr1)
-	createErr2 := store.CreateTimer(ctx, shardId, shardVersion, namespace2, timer2)
-	require.Nil(t, createErr2)
-
-	// Query namespace1 only
-	request := &databases.RangeGetTimersRequest{
-		UpToTimestamp: baseTime.Add(5 * time.Minute),
-		Limit:         10,
-	}
-
-	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, namespace1, request)
-	require.Nil(t, getErr)
-	require.NotNil(t, response)
-	require.Len(t, response.Timers, 2)
-	assert.Equal(t, "timer-1", response.Timers[0].Id)
-	assert.Equal(t, namespace1, response.Timers[0].Namespace)
 }
 
 func TestGetTimersUpToTimestamp_TimeOrdering(t *testing.T) {
@@ -335,7 +280,7 @@ func TestGetTimersUpToTimestamp_TimeOrdering(t *testing.T) {
 		Limit:         10,
 	}
 
-	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, namespace, request)
+	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, request)
 	require.Nil(t, getErr)
 	require.NotNil(t, response)
 	require.Len(t, response.Timers, 3)

@@ -33,20 +33,20 @@ type (
 
 		GetTimersUpToTimestamp(
 			ctx context.Context,
-			shardId int, namespace string,
+			shardId int,
 			request *RangeGetTimersRequest,
 		) (*RangeGetTimersResponse, *DbError)
 
 		DeleteTimersUpToTimestampWithBatchInsert(
 			ctx context.Context,
-			shardId int, shardVersion int64, namespace string,
+			shardId int, shardVersion int64,
 			request *RangeDeleteTimersRequest,
 			TimersToInsert []*DbTimer,
 		) (*RangeDeleteTimersResponse, *DbError)
 
 		BatchInsertTimers(
 			ctx context.Context,
-			shardId int, shardVersion int64, namespace string,
+			shardId int, shardVersion int64,
 			TimersToInsert []*DbTimer,
 		) *DbError
 
