@@ -51,6 +51,12 @@
 - Support graceful degradation under load
 - Benchmark against realistic workloads
 
+### 8. Development and Testing Guidelines
+**Rule**: When running tests, assume that the required database environments are already set up on the machine. Do not attempt to run Docker commands or set up database containers as part of the testing process.
+- Assume databases (Cassandra, PostgreSQL, MySQL, MongoDB, DynamoDB, etc.) are running and accessible
+- Focus on test execution rather than environment setup
+- If tests fail due to missing database connections, report the issue without attempting automated setup
+
 ---
 
 ## Future Considerations
