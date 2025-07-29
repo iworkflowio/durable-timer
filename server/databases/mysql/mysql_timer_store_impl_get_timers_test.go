@@ -26,7 +26,7 @@ func TestGetTimersUpToTimestamp_Basic(t *testing.T) {
 	require.Equal(t, int64(1), shardVersion)
 
 	// Create multiple timers with different execution times
-	baseTime := time.Now().Truncate(time.Second) // Remove nanoseconds for consistent comparison
+	baseTime := time.Now().UTC().Truncate(time.Millisecond) // MySQL stores in UTC with millisecond precision
 	timers := []*databases.DbTimer{
 		{
 			Id:                     "timer-1",
@@ -95,7 +95,7 @@ func TestGetTimersUpToTimestamp_WithLimit(t *testing.T) {
 	require.Nil(t, err)
 
 	// Create 5 timers
-	baseTime := time.Now().Truncate(time.Second)
+	baseTime := time.Now().UTC().Truncate(time.Millisecond) // MySQL stores in UTC with millisecond precision
 	for i := 1; i <= 5; i++ {
 		timer := &databases.DbTimer{
 			Id:                     fmt.Sprintf("timer-%d", i),
@@ -141,7 +141,7 @@ func TestGetTimersUpToTimestamp_WithPayloadAndRetryPolicy(t *testing.T) {
 	require.Nil(t, err)
 
 	// Create timer with payload and retry policy
-	baseTime := time.Now().Truncate(time.Second)
+	baseTime := time.Now().UTC().Truncate(time.Millisecond) // MySQL stores in UTC with millisecond precision
 	payload := map[string]interface{}{
 		"message": "test payload",
 		"number":  42,
@@ -237,7 +237,7 @@ func TestGetTimersUpToTimestamp_TimeOrdering(t *testing.T) {
 	require.Nil(t, err)
 
 	// Create timers in non-sequential order
-	baseTime := time.Now().Truncate(time.Second)
+	baseTime := time.Now().UTC().Truncate(time.Millisecond) // MySQL stores in UTC with millisecond precision
 	timers := []*databases.DbTimer{
 		{
 			Id:                     "timer-3",

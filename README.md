@@ -14,7 +14,6 @@ A highly scalable, performant and distributed durable timer service
 
 ## Supported databases
 * [x] Cassandra
-* [x] ScyllaDB
 * [x] MongoDB
 * [x] DynamoDB
 * [x] MySQL
