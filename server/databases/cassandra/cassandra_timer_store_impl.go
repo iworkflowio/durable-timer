@@ -338,8 +338,100 @@ func (c *CassandraTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardI
 }
 
 func (c *CassandraTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+
+	// Convert start and end UUIDs to high/low format for precise range selection
+	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
+	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+
+	// Create a batch with LWT for atomic operation
+	batch := c.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
+
+	// Add shard version check to batch - update shard version to same value to verify it matches
+	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
+	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
+
+	// Add range DELETE statement for timers in the specified range
+	deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? 
+	                AND (timer_execute_at, timer_uuid_high, timer_uuid_low) >= (?, ?, ?)
+	                AND (timer_execute_at, timer_uuid_high, timer_uuid_low) <= (?, ?, ?)`
+	batch.Query(deleteQuery, shardId, databases.RowTypeTimer,
+		request.StartTimestamp, startUuidHigh, startUuidLow,
+		request.EndTimestamp, endUuidHigh, endUuidLow)
+
+	// Add INSERT statements for new timers
+	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	for _, timer := range TimersToInsert {
+		// Convert the timer UUID to high/low format
+		timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timer.TimerUuid)
+
+		// Serialize payload and retry policy to JSON
+		var payloadJSON, retryPolicyJSON string
+
+		if timer.Payload != nil {
+			payloadBytes, marshalErr := json.Marshal(timer.Payload)
+			if marshalErr != nil {
+				return nil, databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+			}
+			payloadJSON = string(payloadBytes)
+		}
+
+		if timer.RetryPolicy != nil {
+			retryPolicyBytes, marshalErr := json.Marshal(timer.RetryPolicy)
+			if marshalErr != nil {
+				return nil, databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+			}
+			retryPolicyJSON = string(retryPolicyBytes)
+		}
+
+		batch.Query(insertQuery,
+			shardId,
+			databases.RowTypeTimer,
+			timer.ExecuteAt,
+			timerUuidHigh,
+			timerUuidLow,
+			timer.Id,
+			timer.Namespace,
+			timer.CallbackUrl,
+			payloadJSON,
+			retryPolicyJSON,
+			timer.CallbackTimeoutSeconds,
+			timer.CreatedAt,
+			0, // timer_attempts starts at 0
+		)
+	}
+
+	// Execute the batch atomically
+	previous := make(map[string]interface{})
+	applied, iter, batchErr := c.session.MapExecuteBatchCAS(batch, previous)
+	if iter != nil {
+		iter.Close()
+	}
+
+	if batchErr != nil {
+		return nil, databases.NewGenericDbError("failed to execute atomic delete and insert batch", batchErr)
+	}
+
+	if !applied {
+		// Batch failed - check if it was due to shard version mismatch or shard not existing
+		var conflictShardVersion int64
+		if shardVersionValue, exists := previous["shard_version"]; exists && shardVersionValue != nil {
+			conflictShardVersion = shardVersionValue.(int64)
+			conflictInfo := &databases.ShardInfo{
+				ShardVersion: conflictShardVersion,
+			}
+			return nil, databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete and insert operation", nil, conflictInfo)
+		} else {
+			// Shard doesn't exist
+			return nil, databases.NewGenericDbError("shard record does not exist", nil)
+		}
+	}
+
+	return &databases.RangeDeleteTimersResponse{
+		DeletedCount: 0, // Count not available for range deletes in batch operations
+	}, nil
 }
 
 func (c *CassandraTimerStore) BatchInsertTimers(ctx context.Context, shardId int, shardVersion int64, TimersToInsert []*databases.DbTimer) *databases.DbError {
