@@ -17,6 +17,18 @@ Each decision should include:
 
 ## Decisions
 
+### [Date: 2025-07-29] DynamoDB FilterExpression and Limit Ordering Issue
+
+- **Context**: During implementation of `GetTimersUpToTimestamp` API for DynamoDB, discovered that DynamoDB applies the `Limit` parameter before the `FilterExpression`. When querying the `ExecuteAtWithUuidIndex` LSI with a limit of 3 and filtering for `row_type = 2` (timer records), DynamoDB would scan the first 3 records from the index (which might include 1 shard record with `row_type = 1`), then apply the filter, returning only 2 timer records instead of the expected 3. This behavior is specific to DynamoDB's query execution order and differs from SQL databases where filtering typically happens before limiting.
+
+- **Decision**: Account for potential shard record filtering by setting the DynamoDB query limit to `request.Limit + 1` instead of `request.Limit`. Within each shard, there is exactly one shard record, so in the worst case DynamoDB returns `request.Limit` timer records + 1 shard record. After the `FilterExpression` removes the shard record, we get exactly the requested number of timer records. Additionally, implement client-side limit enforcement to ensure we never return more than `request.Limit` records even if all returned records are timers.
+
+- **Rationale**: This solution is precise and efficient because it accounts for exactly the maximum number of non-timer records that could be filtered out (1 shard record per shard). The `+1` approach is much more efficient than alternatives like doubling the limit or using pagination, while still guaranteeing correct results. The solution leverages our understanding of the data model (exactly one shard record per shard) to provide the minimal overhead needed.
+
+- **Alternatives**: Use much larger limits (e.g., `request.Limit * 2`) to account for filtering, implement DynamoDB pagination to fetch additional results when needed, remove the FilterExpression and implement filtering in application code, use separate queries for shard and timer records
+
+- **Impact**: Enables correct `GetTimersUpToTimestamp` behavior in DynamoDB with minimal performance overhead. The solution is specific to DynamoDB and doesn't affect other database implementations. Provides a template for handling similar FilterExpression/Limit ordering issues in other DynamoDB queries. Documents an important DynamoDB behavior that differs from SQL databases for future reference.
+
 ### [Date: 2025-07-23] UUID Splitting for Predictable Pagination Support
 - **Context**: Timer pagination requires predictable cursor ordering based on `execute_at + timer_uuid` to determine if new timers fall within loaded page windows. The timer engine needs to inject new timers into the correct page position and know whether a timer with given `(execute_at, timer_uuid)` belongs in the current page window. Storing UUIDs as native UUID types (128-bit values) loses the ability to make predictable comparisons for cursor-based pagination since UUIDs are not easily comparable for ordering operations.
 - **Decision**: Split the 128-bit UUID into two 64-bit integers (`timer_uuid_high` and `timer_uuid_low`) for most databases to enable predictable ordering and comparison operations. **Special case for DynamoDB**: Use composite field `timer_execute_at_with_uuid` that combines timestamp and UUID string (e.g., `"2025-01-01T10:00:00.000Z#550e8400-e29b-41d4-a716-446655440000"`) for stable lexicographic cursor ordering. Provide conversion functions to split UUID strings into high/low integers and reconstruct UUIDs from integer pairs.

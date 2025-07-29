@@ -426,7 +426,7 @@ func (d *DynamoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int,
 
 func (d *DynamoDBTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
 	// Create upper bound for execute_at_with_uuid comparison
-	upperBound := databases.FormatExecuteAtWithUuid(request.UpToTimestamp, "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz")
+	upperBound := databases.FormatExecuteAtWithUuid(request.UpToTimestamp, "ffffffff-ffff-ffff-ffff-ffffffffffff")
 
 	// Query using the ExecuteAtWithUuidIndex LSI
 	queryInput := &dynamodb.QueryInput{
@@ -439,8 +439,8 @@ func (d *DynamoDBTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId
 			":upper_bound":    &types.AttributeValueMemberS{Value: upperBound},
 			":timer_row_type": &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeTimer))},
 		},
-		Limit:            aws.Int32(int32(request.Limit)),
-		ScanIndexForward: aws.Bool(true), // Sort ascending by timer_execute_at_with_uuid
+		Limit:            aws.Int32(int32(request.Limit + 1)), // Account for potential shard record filtering
+		ScanIndexForward: aws.Bool(true),                      // Sort ascending by timer_execute_at_with_uuid
 	}
 
 	result, err := d.client.Query(ctx, queryInput)
@@ -510,6 +510,11 @@ func (d *DynamoDBTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId
 		}
 
 		timers = append(timers, timer)
+
+		// Stop if we've reached the requested limit
+		if len(timers) >= request.Limit {
+			break
+		}
 	}
 
 	return &databases.RangeGetTimersResponse{

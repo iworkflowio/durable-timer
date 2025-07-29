@@ -181,12 +181,6 @@ func TestGetTimersUpToTimestamp_WithPayloadAndRetryPolicy(t *testing.T) {
 	assert.Equal(t, "timer-with-data", retrievedTimer.Id)
 	assert.Equal(t, timer.TimerUuid, retrievedTimer.TimerUuid)
 	assert.Equal(t, namespace, retrievedTimer.Namespace)
-
-	// Debug timestamp comparison
-	t.Logf("Original timer.ExecuteAt: %v", timer.ExecuteAt)
-	t.Logf("Retrieved timer.ExecuteAt: %v", retrievedTimer.ExecuteAt)
-	t.Logf("Times equal: %v", timer.ExecuteAt.Equal(retrievedTimer.ExecuteAt))
-
 	assert.True(t, timer.ExecuteAt.Equal(retrievedTimer.ExecuteAt))
 	assert.Equal(t, "https://example.com/callback", retrievedTimer.CallbackUrl)
 

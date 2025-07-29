@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
+
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -41,45 +41,11 @@ func getSchemaFilePath() string {
 	return filepath.Join(dir, "schema", "v1.json")
 }
 
-// executeSchemaFileWithAWSCLI creates DynamoDB table using AWS CLI and the schema file
-func executeSchemaFileWithAWSCLI() error {
-	schemaFilePath := getSchemaFilePath()
-	if _, err := os.Stat(schemaFilePath); os.IsNotExist(err) {
-		log.Fatalf("Schema file not found at %s", schemaFilePath)
-	}
-
-	// Use docker exec to run aws cli inside the dynamodb container network
-	cmd := exec.Command("docker", "run", "--rm",
-		"--network", "docker_default", // Assumes docker-compose network
-		"-v", fmt.Sprintf("%s:/schema", filepath.Dir(schemaFilePath)),
-		"-e", "AWS_ACCESS_KEY_ID=dummy",
-		"-e", "AWS_SECRET_ACCESS_KEY=dummy",
-		"-e", "AWS_DEFAULT_REGION=us-east-1",
-		"amazon/aws-cli:latest",
-		"dynamodb", "create-table",
-		"--endpoint-url", "http://timer-service-dynamodb-dev:8000",
-		"--table-name", testTableName,
-		"--cli-input-json", "file:///schema/v1.json")
-
-	// Modify the command to use the test table name
-	cmdStr := fmt.Sprintf(`sed 's/"TableName": "timers"/"TableName": "%s"/' %s | docker run --rm -i --network docker_default -e AWS_ACCESS_KEY_ID=dummy -e AWS_SECRET_ACCESS_KEY=dummy -e AWS_DEFAULT_REGION=us-east-1 amazon/aws-cli:latest dynamodb create-table --endpoint-url http://timer-service-dynamodb-dev:8000 --cli-input-json file:///dev/stdin`, testTableName, schemaFilePath)
-
-	cmd = exec.Command("sh", "-c", cmdStr)
-
-	// Run the command
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("aws cli command failed: %w\nOutput: %s", err, string(output))
-	}
-
-	log.Printf("DynamoDB table %s created successfully with AWS CLI", testTableName)
-	return nil
-}
 
 // setupTestStore creates a test store with a clean test table
 func setupTestStore(t *testing.T) (*DynamoDBTimerStore, func()) {
 	// Create test table
-	err := createTestTable()
+	err := createTestTableDirect()
 	if err != nil {
 		t.Fatal("Failed to create test table:", err)
 	}
@@ -108,15 +74,6 @@ func setupTestStore(t *testing.T) (*DynamoDBTimerStore, func()) {
 	return dynamodbStore, cleanup
 }
 
-func createTestTable() error {
-	// Try to create table using AWS CLI via Docker
-	err := executeSchemaFileWithAWSCLI()
-	if err != nil {
-		// If AWS CLI approach fails, try direct approach
-		return createTestTableDirect()
-	}
-	return nil
-}
 
 func createTestTableDirect() error {
 	// Create AWS config for DynamoDB Local
@@ -157,7 +114,7 @@ func createTestTableDirect() error {
 				AttributeType: types.ScalarAttributeTypeS,
 			},
 			{
-				AttributeName: aws.String("timer_execute_at"),
+				AttributeName: aws.String("timer_execute_at_with_uuid"),
 				AttributeType: types.ScalarAttributeTypeS,
 			},
 		},
@@ -173,14 +130,14 @@ func createTestTableDirect() error {
 		},
 		LocalSecondaryIndexes: []types.LocalSecondaryIndex{
 			{
-				IndexName: aws.String("ExecuteAtIndex"),
+				IndexName: aws.String("ExecuteAtWithUuidIndex"),
 				KeySchema: []types.KeySchemaElement{
 					{
 						AttributeName: aws.String("shard_id"),
 						KeyType:       types.KeyTypeHash,
 					},
 					{
-						AttributeName: aws.String("timer_execute_at"),
+						AttributeName: aws.String("timer_execute_at_with_uuid"),
 						KeyType:       types.KeyTypeRange,
 					},
 				},
