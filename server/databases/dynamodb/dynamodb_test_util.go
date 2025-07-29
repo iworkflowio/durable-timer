@@ -93,7 +93,7 @@ func createTestTableDirect() error {
 	client := dynamodb.NewFromConfig(awsCfg)
 
 	// Drop table if exists
-	_, err = client.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{
+	_, _ = client.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{
 		TableName: aws.String(testTableName),
 	})
 	// Ignore error if table doesn't exist
