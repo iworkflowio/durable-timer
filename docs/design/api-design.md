@@ -67,6 +67,7 @@ Otherwise will retry, if retryPolicy is provided on timer creation.
 **Success Semantics**:
 - HTTP 200 + `{"ok": true}` = Success, timer completes
 - HTTP 200 + `{"ok": false, "nextExecuteAt": "..."}` = Reschedule timer
+- HTTP 4xx = In valid timer, not retry
 - Any other HTTP code = Failure, retry according to policy
 
 
