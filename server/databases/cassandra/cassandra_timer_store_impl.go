@@ -44,7 +44,7 @@ func (c *CassandraTimerStore) Close() error {
 	return nil
 }
 func (c *CassandraTimerStore) ClaimShardOwnership(
-	ctx context.Context, shardId int, ownerId string, metadata interface{},
+	ctx context.Context, shardId int, ownerAddr string, metadata interface{},
 ) (shardVersion int64, retErr *databases.DbError) {
 	// Convert ZeroUUID to high/low format for shard records
 	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
@@ -66,7 +66,7 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	// First, try to read the current shard record from unified timers table
 	var currentVersion int64
 	var currentOwnerId string
-	query := `SELECT shard_version, shard_owner_id FROM timers WHERE shard_id = ? AND row_type = ?`
+	query := `SELECT shard_version, shard_owner_addr FROM timers WHERE shard_id = ? AND row_type = ?`
 	err := c.session.Query(query, shardId, databases.RowTypeShard).WithContext(ctx).Scan(&currentVersion, &currentOwnerId)
 
 	if err != nil && !errors.Is(err, gocql.ErrNotFound) {
@@ -77,10 +77,10 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 		// Shard doesn't exist, create it with version 1
 		newVersion := int64(1)
 
-		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, shard_version, shard_owner_id, shard_claimed_at, shard_metadata) 
+		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, shard_version, shard_owner_addr, shard_claimed_at, shard_metadata) 
 		                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`
 
-		applied, err := c.session.Query(insertQuery, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, newVersion, ownerId, now, metadataJSON).
+		applied, err := c.session.Query(insertQuery, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, newVersion, ownerAddr, now, metadataJSON).
 			WithContext(ctx).MapScanCAS(previous)
 
 		if err != nil {
@@ -91,7 +91,7 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 			// Another instance created the record concurrently, return conflict info
 			conflictInfo := &databases.ShardInfo{
 				ShardId:      int64(previous["shard_id"].(int)),
-				OwnerId:      previous["shard_owner_id"].(string),
+				OwnerAddr:    previous["shard_owner_addr"].(string),
 				ClaimedAt:    previous["shard_claimed_at"].(time.Time),
 				Metadata:     previous["shard_metadata"],
 				ShardVersion: previous["shard_version"].(int64),
@@ -105,10 +105,10 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 
 	// Update the shard with new version and ownership using optimistic concurrency control
 	newVersion := currentVersion + 1
-	updateQuery := `UPDATE timers SET shard_version = ?, shard_owner_id = ?, shard_claimed_at = ?, shard_metadata = ? 
+	updateQuery := `UPDATE timers SET shard_version = ?, shard_owner_addr = ?, shard_claimed_at = ?, shard_metadata = ? 
 	                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
 
-	applied, err := c.session.Query(updateQuery, newVersion, ownerId, now, metadataJSON,
+	applied, err := c.session.Query(updateQuery, newVersion, ownerAddr, now, metadataJSON,
 		shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, currentVersion).
 		WithContext(ctx).MapScanCAS(previous)
 

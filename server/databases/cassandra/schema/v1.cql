@@ -17,7 +17,7 @@ CREATE TABLE timers (
     
     -- Shard-specific fields (row_type = 1)
     shard_version bigint,
-    shard_owner_id text,
+    shard_owner_addr text,
     shard_claimed_at timestamp,
     shard_metadata text,         -- JSON serialized
 

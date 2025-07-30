@@ -53,7 +53,7 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 
 	require.NoError(t, findErr)
 	assert.Equal(t, int64(1), getInt64FromBSON(result, "shard_version"))
-	assert.Equal(t, ownerId, getStringFromBSON(result, "shard_owner_id"))
+	assert.Equal(t, ownerId, getStringFromBSON(result, "shard_owner_addr"))
 
 	metadataStr := getStringFromBSON(result, "shard_metadata")
 	assert.Contains(t, metadataStr, "us-west-2")
@@ -102,7 +102,7 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 
 	require.NoError(t, findErr)
 	assert.Equal(t, int64(3), getInt64FromBSON(result, "shard_version"))
-	assert.Equal(t, "owner-1", getStringFromBSON(result, "shard_owner_id"))
+	assert.Equal(t, "owner-1", getStringFromBSON(result, "shard_owner_addr"))
 }
 
 func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
@@ -183,7 +183,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 
 	require.NoError(t, findErr)
 	assert.Equal(t, maxVersion, getInt64FromBSON(result, "shard_version"), "Database version should match highest successful claim")
-	assert.Equal(t, lastSuccessfulOwner, getStringFromBSON(result, "shard_owner_id"), "Database owner should match last successful claimer")
+	assert.Equal(t, lastSuccessfulOwner, getStringFromBSON(result, "shard_owner_addr"), "Database owner should match last successful claimer")
 }
 
 func TestClaimShardOwnership_NilMetadata(t *testing.T) {

@@ -79,7 +79,7 @@ func (d *DynamoDBTimerStore) Close() error {
 }
 
 func (d *DynamoDBTimerStore) ClaimShardOwnership(
-	ctx context.Context, shardId int, ownerId string, metadata interface{},
+	ctx context.Context, shardId int, ownerAddr string, metadata interface{},
 ) (shardVersion int64, retErr *databases.DbError) {
 	// Serialize metadata to JSON
 	var metadataJSON *string
@@ -124,7 +124,7 @@ func (d *DynamoDBTimerStore) ClaimShardOwnership(
 			"row_type":                   &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeShard))},
 			"timer_execute_at_with_uuid": &types.AttributeValueMemberS{Value: shardExecuteAtWithUuid},
 			"shard_version":              &types.AttributeValueMemberN{Value: strconv.FormatInt(newVersion, 10)},
-			"shard_owner_id":             &types.AttributeValueMemberS{Value: ownerId},
+			"shard_owner_addr":           &types.AttributeValueMemberS{Value: ownerAddr},
 			"shard_claimed_at":           &types.AttributeValueMemberS{Value: now.Format(time.RFC3339Nano)},
 		}
 
@@ -165,10 +165,10 @@ func (d *DynamoDBTimerStore) ClaimShardOwnership(
 	newVersion := currentVersion + 1
 
 	// Update with version check for optimistic concurrency
-	updateExpr := "SET shard_version = :new_version, shard_owner_id = :owner_id, shard_claimed_at = :claimed_at"
+	updateExpr := "SET shard_version = :new_version, shard_owner_addr = :owner_addr, shard_claimed_at = :claimed_at"
 	exprAttrValues := map[string]types.AttributeValue{
 		":new_version":     &types.AttributeValueMemberN{Value: strconv.FormatInt(newVersion, 10)},
-		":owner_id":        &types.AttributeValueMemberS{Value: ownerId},
+		":owner_addr":        &types.AttributeValueMemberS{Value: ownerAddr},
 		":claimed_at":      &types.AttributeValueMemberS{Value: now.Format(time.RFC3339Nano)},
 		":current_version": &types.AttributeValueMemberN{Value: strconv.FormatInt(currentVersion, 10)},
 	}
@@ -234,9 +234,9 @@ func extractShardInfoFromItem(item map[string]types.AttributeValue, shardId int6
 		}
 	}
 
-	if ownerAttr, exists := item["shard_owner_id"]; exists {
+	if ownerAttr, exists := item["shard_owner_addr"]; exists {
 		if ownerStr, ok := ownerAttr.(*types.AttributeValueMemberS); ok {
-			info.OwnerId = ownerStr.Value
+			info.OwnerAddr = ownerStr.Value
 		}
 	}
 
@@ -289,7 +289,6 @@ func (d *DynamoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shard
 		retryPolicyJSON = &retryPolicyStr
 	}
 
-	
 	timerSortKey := GetTimerSortKey(namespace, timer.Id)
 
 	// Create composite execute_at_with_uuid field for predictable pagination
@@ -387,7 +386,6 @@ func (d *DynamoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int,
 		retryPolicyJSON = &retryPolicyStr
 	}
 
-	
 	timerSortKey := GetTimerSortKey(namespace, timer.Id)
 
 	// Create composite execute_at_with_uuid field for predictable pagination
@@ -673,7 +671,7 @@ func (d *DynamoDBTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx contex
 			}
 			return nil, databases.NewGenericDbError("failed to execute atomic delete and insert transaction", transactErr)
 		}
-	} 
+	}
 
 	return &databases.RangeDeleteTimersResponse{
 		DeletedCount: deletedCount,

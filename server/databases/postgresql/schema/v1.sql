@@ -11,7 +11,7 @@ CREATE TABLE timers (
     timer_retry_policy JSONB,
     timer_callback_timeout_seconds INTEGER DEFAULT 30,
     shard_version BIGINT,
-    shard_owner_id VARCHAR(255),
+    shard_owner_addr VARCHAR(255),
     shard_claimed_at TIMESTAMP(3),
     shard_metadata JSONB,
     timer_created_at TIMESTAMP(3) NOT NULL DEFAULT NOW(),

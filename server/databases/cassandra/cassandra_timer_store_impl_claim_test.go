@@ -41,7 +41,7 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 	var dbMetadata string
 	var dbClaimedAt time.Time
 
-	query := "SELECT shard_version, shard_owner_id, shard_metadata, shard_claimed_at FROM timers WHERE shard_id = ? AND row_type = ?"
+	query := "SELECT shard_version, shard_owner_addr, shard_metadata, shard_claimed_at FROM timers WHERE shard_id = ? AND row_type = ?"
 	scanErr := store.session.Query(query, shardId, 1).Scan(&dbVersion, &dbOwnerId, &dbMetadata, &dbClaimedAt)
 
 	require.NoError(t, scanErr)
@@ -77,7 +77,7 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 	// Verify final state
 	var dbVersion int64
 	var dbOwnerId string
-	query := "SELECT shard_version, shard_owner_id FROM timers WHERE shard_id = ? AND row_type = ?"
+	query := "SELECT shard_version, shard_owner_addr FROM timers WHERE shard_id = ? AND row_type = ?"
 	scanErr := store.session.Query(query, shardId, 1).Scan(&dbVersion, &dbOwnerId)
 
 	require.NoError(t, scanErr)
@@ -149,7 +149,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 	// Verify final database state
 	var dbVersion int64
 	var dbOwnerId string
-	query := "SELECT shard_version, shard_owner_id FROM timers WHERE shard_id = ? AND row_type = ?"
+	query := "SELECT shard_version, shard_owner_addr FROM timers WHERE shard_id = ? AND row_type = ?"
 	scanErr := store.session.Query(query, shardId, 1).Scan(&dbVersion, &dbOwnerId)
 
 	require.NoError(t, scanErr)

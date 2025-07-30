@@ -44,7 +44,7 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 	var dbOwnerId string
 	var dbMetadata string
 	var dbClaimedAt time.Time
-	query := "SELECT shard_version, shard_owner_id, shard_metadata, shard_claimed_at FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5"
+	query := "SELECT shard_version, shard_owner_addr, shard_metadata, shard_claimed_at FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5"
 	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerId, &dbMetadata, &dbClaimedAt)
 
 	require.NoError(t, scanErr)
@@ -83,7 +83,7 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 	// Verify final state
 	var dbVersion int64
 	var dbOwnerId string
-	query := "SELECT shard_version, shard_owner_id FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5"
+	query := "SELECT shard_version, shard_owner_addr FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5"
 	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerId)
 
 	require.NoError(t, scanErr)
@@ -158,7 +158,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 	// Verify final database state
 	var dbVersion int64
 	var dbOwnerId string
-	query := "SELECT shard_version, shard_owner_id FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5"
+	query := "SELECT shard_version, shard_owner_addr FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5"
 	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerId)
 
 	require.NoError(t, scanErr)

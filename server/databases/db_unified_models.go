@@ -1,8 +1,9 @@
 package databases
 
 import (
-	"github.com/google/uuid"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const RowTypeShard = int16(1) // 1 = shard record
@@ -18,7 +19,7 @@ var ZeroUUIDString = ZeroUUID.String()
 type (
 	ShardInfo struct {
 		ShardId      int64
-		OwnerId      string
+		OwnerAddr    string
 		ShardVersion int64
 		Metadata     interface{}
 		ClaimedAt    time.Time

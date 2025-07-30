@@ -57,7 +57,7 @@ func (p *PostgreSQLTimerStore) Close() error {
 }
 
 func (p *PostgreSQLTimerStore) ClaimShardOwnership(
-	ctx context.Context, shardId int, ownerId string, metadata interface{},
+	ctx context.Context, shardId int, ownerAddr string, metadata interface{},
 ) (shardVersion int64, retErr *databases.DbError) {
 	// Convert ZeroUUID to high/low format for shard records
 	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
@@ -77,7 +77,7 @@ func (p *PostgreSQLTimerStore) ClaimShardOwnership(
 	// First, try to read the current shard record from unified timers table
 	var currentVersion int64
 	var currentOwnerId string
-	query := `SELECT shard_version, shard_owner_id FROM timers 
+	query := `SELECT shard_version, shard_owner_addr FROM timers 
 	          WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5`
 
 	err := p.db.QueryRowContext(ctx, query, shardId, databases.RowTypeShard,
@@ -91,12 +91,12 @@ func (p *PostgreSQLTimerStore) ClaimShardOwnership(
 		// Shard doesn't exist, create it with version 1
 		newVersion := int64(1)
 		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, 
-		                                   shard_version, shard_owner_id, shard_claimed_at, shard_metadata) 
+		                                   shard_version, shard_owner_addr, shard_claimed_at, shard_metadata) 
 		                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 
 		_, err := p.db.ExecContext(ctx, insertQuery,
 			shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow,
-			newVersion, ownerId, now, metadataJSON)
+			newVersion, ownerAddr, now, metadataJSON)
 
 		if err != nil {
 			// Check if it's a duplicate key error (another instance created it concurrently)
@@ -107,7 +107,7 @@ func (p *PostgreSQLTimerStore) ClaimShardOwnership(
 				var conflictClaimedAt time.Time
 				var conflictMetadata string
 
-				conflictQuery := `SELECT shard_version, shard_owner_id, shard_claimed_at, shard_metadata 
+				conflictQuery := `SELECT shard_version, shard_owner_addr, shard_claimed_at, shard_metadata 
 				                  FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5`
 
 				conflictErr := p.db.QueryRowContext(ctx, conflictQuery, shardId, databases.RowTypeShard,
@@ -116,7 +116,7 @@ func (p *PostgreSQLTimerStore) ClaimShardOwnership(
 				if conflictErr == nil {
 					conflictInfo := &databases.ShardInfo{
 						ShardId:      int64(shardId),
-						OwnerId:      conflictOwnerId,
+						OwnerAddr:    conflictOwnerId,
 						ClaimedAt:    conflictClaimedAt,
 						Metadata:     conflictMetadata,
 						ShardVersion: conflictVersion,
@@ -133,11 +133,11 @@ func (p *PostgreSQLTimerStore) ClaimShardOwnership(
 
 	// Update the shard with new version and ownership using optimistic concurrency control
 	newVersion := currentVersion + 1
-	updateQuery := `UPDATE timers SET shard_version = $1, shard_owner_id = $2, shard_claimed_at = $3, shard_metadata = $4 
+	updateQuery := `UPDATE timers SET shard_version = $1, shard_owner_addr = $2, shard_claimed_at = $3, shard_metadata = $4 
 	                WHERE shard_id = $5 AND row_type = $6 AND timer_execute_at = $7 AND timer_uuid_high = $8 AND timer_uuid_low = $9 AND shard_version = $10`
 
 	result, err := p.db.ExecContext(ctx, updateQuery,
-		newVersion, ownerId, now, metadataJSON,
+		newVersion, ownerAddr, now, metadataJSON,
 		shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, currentVersion)
 
 	if err != nil {

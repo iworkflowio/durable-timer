@@ -59,7 +59,7 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 	assert.Equal(t, int64(1), shardVersion)
 
 	shardInfo := extractShardInfoFromItem(result.Item, int64(shardId))
-	assert.Equal(t, ownerId, shardInfo.OwnerId)
+	assert.Equal(t, ownerId, shardInfo.OwnerAddr)
 	assert.Contains(t, shardInfo.Metadata, "instance-1")
 	assert.Contains(t, shardInfo.Metadata, "us-west-2")
 	assert.True(t, time.Since(shardInfo.ClaimedAt) < 5*time.Second, "claimed_at should be recent")
@@ -107,7 +107,7 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 	assert.Equal(t, int64(3), shardVersion)
 
 	shardInfo := extractShardInfoFromItem(result.Item, int64(shardId))
-	assert.Equal(t, "owner-1", shardInfo.OwnerId)
+	assert.Equal(t, "owner-1", shardInfo.OwnerAddr)
 }
 
 func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
@@ -191,7 +191,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 	assert.Equal(t, maxVersion, dbVersion, "Database version should match highest successful claim")
 
 	shardInfo := extractShardInfoFromItem(result.Item, int64(shardId))
-	assert.Equal(t, lastSuccessfulOwner, shardInfo.OwnerId, "Database owner should match last successful claimer")
+	assert.Equal(t, lastSuccessfulOwner, shardInfo.OwnerAddr, "Database owner should match last successful claimer")
 }
 
 func TestClaimShardOwnership_NilMetadata(t *testing.T) {

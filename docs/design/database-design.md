@@ -136,7 +136,7 @@ CREATE TABLE timers (
     
     -- Shard-specific fields (row_type = 1)  
     shard_version       BIGINT,                    -- Optimistic concurrency control
-    shard_owner_id      VARCHAR(255),              -- Current owner instance
+    shard_owner_addr    VARCHAR(255),              -- Current owner instance
     shard_claimed_at    TIMESTAMP,                 -- When ownership was claimed
     shard_metadata      TEXT,                      -- Owner metadata (JSON)
     
@@ -244,7 +244,7 @@ DynamoDB uses a different approach due to its key structure limitations:
 **Query Patterns**:
 ```sql
 -- Shard ownership operations (row_type = 1)
-SELECT shard_version, shard_owner_id, shard_claimed_at, shard_metadata 
+SELECT shard_version, shard_owner_addr, shard_claimed_at, shard_metadata 
 FROM timers WHERE shard_id = ? AND row_type = 1;
 
 -- Timer execution query (row_type = 2, high frequency)
@@ -281,7 +281,7 @@ CREATE TABLE timers (
     
     -- Shard-specific fields (row_type = 1)
     shard_version bigint,
-    shard_owner_id text,
+    shard_owner_addr text,
     shard_claimed_at timestamp,
     shard_metadata text,         -- JSON serialized
 
@@ -296,11 +296,11 @@ CREATE INDEX idx_timer_namespace_id ON timers (timer_namespace, timer_id);
 **Query Patterns**:
 ```cql
 -- Shard ownership claim (row_type = 1)
-SELECT shard_version, shard_owner_id, shard_claimed_at, shard_metadata
+SELECT shard_version, shard_owner_addr, shard_claimed_at, shard_metadata
 FROM timers WHERE shard_id = ? AND row_type = 1;
 
 -- Update shard ownership (CAS operation)
-UPDATE timers SET shard_version = ?, shard_owner_id = ?, shard_claimed_at = ?, shard_metadata = ?
+UPDATE timers SET shard_version = ?, shard_owner_addr = ?, shard_claimed_at = ?, shard_metadata = ?
 WHERE shard_id = ? AND row_type = 1 IF shard_version = ?;
 
 -- Timer execution query (row_type = 2, leverages clustering)
@@ -357,7 +357,7 @@ SELECT * FROM timers WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ?
   
   // Shard-specific fields  
   shard_version: NumberLong(42),
-  shard_owner_id: "instance-uuid-1234",
+  shard_owner_addr: "instance-uuid-1234",
   shard_claimed_at: ISODate("2024-12-19T10:00:00Z"),
   shard_metadata: {
     processId: 12345,
@@ -394,7 +394,7 @@ db.timers.findOne({
   row_type: 1
 }, {
   shard_version: 1,
-  shard_owner_id: 1, 
+  shard_owner_addr: 1, 
   shard_claimed_at: 1,
   shard_metadata: 1
 })
@@ -407,7 +407,7 @@ db.timers.updateOne({
 }, {
   $set: {
     shard_version: 43,
-    shard_owner_id: "new-instance-uuid",
+    shard_owner_addr: "new-instance-uuid",
     shard_claimed_at: new Date(),
     shard_metadata: {...},
     updated_at: new Date()
@@ -509,7 +509,7 @@ db.timers.findOne({
   
   // Shard-specific fields
   "shard_version": {"N": "42"},
-  "shard_owner_id": {"S": "instance-uuid-1234"},
+  "shard_owner_addr": {"S": "instance-uuid-1234"},
   "shard_claimed_at": {"S": "2024-12-19T10:00:00Z"},
   "shard_metadata": {"S": "{\"processId\":12345,\"serviceVersion\":\"1.0.0\"}"},
 
@@ -536,12 +536,12 @@ db.timers.findOne({
     "shard_id": {"N": "286"},
     "sortKey": {"S": "SHARD#OWNERSHIP"}
   },
-  UpdateExpression: "SET shard_version = :newVersion, shard_owner_id = :ownerId, shard_claimed_at = :claimedAt, shard_metadata = :metadata, updated_at = :now",
+  UpdateExpression: "SET shard_version = :newVersion, shard_owner_addr = :ownerAddr, shard_claimed_at = :claimedAt, shard_metadata = :metadata, updated_at = :now",
   ConditionExpression: "shard_version = :currentVersion",
   ExpressionAttributeValues: {
     ":newVersion": {"N": "43"},
     ":currentVersion": {"N": "42"},
-    ":ownerId": {"S": "new-instance-uuid"},
+    ":ownerAddr": {"S": "new-instance-uuid"},
     ":claimedAt": {"S": "2024-12-20T10:00:00Z"},
     ":metadata": {"S": "{...}"},
     ":now": {"S": "2024-12-20T10:00:00Z"}
@@ -608,7 +608,7 @@ CREATE TABLE timers (
 
     -- Shard-specific fields (row_type = 1)
     shard_version BIGINT,
-    shard_owner_id VARCHAR(255),
+    shard_owner_addr VARCHAR(255),
     shard_claimed_at TIMESTAMP(3),
     shard_metadata JSON,
     
@@ -621,12 +621,12 @@ CREATE TABLE timers (
 ```sql
 -- Shard ownership claim (row_type = 1)
 -- MEDIUM FREQUENCY: Ownership changes during failover
-SELECT shard_version, shard_owner_id, shard_claimed_at, shard_metadata
+SELECT shard_version, shard_owner_addr, shard_claimed_at, shard_metadata
 FROM timers WHERE shard_id = ? AND row_type = 1;
 
 -- Update shard ownership (with optimistic concurrency)
 UPDATE timers 
-SET shard_version = ?, shard_owner_id = ?, shard_claimed_at = ?, shard_metadata = ?, updated_at = NOW(3)
+SET shard_version = ?, shard_owner_addr = ?, shard_claimed_at = ?, shard_metadata = ?, updated_at = NOW(3)
 WHERE shard_id = ? AND row_type = 1 AND shard_version = ?;
 
 -- Timer execution query (row_type = 2, optimized - uses clustered primary key)
@@ -666,7 +666,7 @@ CREATE TABLE timers (
 
     -- Shard-specific fields (row_type = 1)
     shard_version BIGINT,
-    shard_owner_id VARCHAR(255),
+    shard_owner_addr VARCHAR(255),
     shard_claimed_at TIMESTAMP(3),
     shard_metadata JSONB,
     
@@ -689,12 +689,12 @@ CLUSTER timers USING timers_pkey;
 ```sql
 -- Shard ownership claim (row_type = 1)
 -- MEDIUM FREQUENCY: Ownership changes during failover
-SELECT shard_version, shard_owner_id, shard_claimed_at, shard_metadata
+SELECT shard_version, shard_owner_addr, shard_claimed_at, shard_metadata
 FROM timers WHERE shard_id = ? AND row_type = 1;
 
 -- Update shard ownership (with optimistic concurrency)
 UPDATE timers 
-SET shard_version = ?, shard_owner_id = ?, shard_claimed_at = ?, shard_metadata = ?, updated_at = NOW()
+SET shard_version = ?, shard_owner_addr = ?, shard_claimed_at = ?, shard_metadata = ?, updated_at = NOW()
 WHERE shard_id = ? AND row_type = 1 AND shard_version = ?;
 
 -- Timer execution query (row_type = 2, partition-aware)

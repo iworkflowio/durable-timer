@@ -15,7 +15,7 @@ type (
 		ClaimShardOwnership(
 			ctx context.Context,
 			shardId int,
-			ownerId string,
+			ownerAddr string,
 			metadata interface{},
 		) (shardVersion int64, err *DbError)
 

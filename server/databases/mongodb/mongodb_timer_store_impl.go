@@ -94,7 +94,7 @@ func (m *MongoDBTimerStore) Close() error {
 }
 
 func (m *MongoDBTimerStore) ClaimShardOwnership(
-	ctx context.Context, shardId int, ownerId string, metadata interface{},
+	ctx context.Context, shardId int, ownerAddr string, metadata interface{},
 ) (shardVersion int64, retErr *databases.DbError) {
 	// Convert ZeroUUID to high/low format for shard records
 	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
@@ -141,7 +141,7 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 			"timer_uuid_high":  zeroUuidHigh,
 			"timer_uuid_low":   zeroUuidLow,
 			"shard_version":    newVersion,
-			"shard_owner_id":   ownerId,
+			"shard_owner_addr": ownerAddr,
 			"shard_claimed_at": now,
 			"shard_metadata":   metadataJSON,
 		}
@@ -157,7 +157,7 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 				if conflictErr == nil {
 					conflictInfo := &databases.ShardInfo{
 						ShardId:      int64(shardId),
-						OwnerId:      getStringFromBSON(conflictDoc, "shard_owner_id"),
+						OwnerAddr:    getStringFromBSON(conflictDoc, "shard_owner_addr"),
 						ClaimedAt:    getTimeFromBSON(conflictDoc, "shard_claimed_at"),
 						Metadata:     getStringFromBSON(conflictDoc, "shard_metadata"),
 						ShardVersion: getInt64FromBSON(conflictDoc, "shard_version"),
@@ -189,7 +189,7 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 	update := bson.M{
 		"$set": bson.M{
 			"shard_version":    newVersion,
-			"shard_owner_id":   ownerId,
+			"shard_owner_addr": ownerAddr,
 			"shard_claimed_at": now,
 			"shard_metadata":   metadataJSON,
 		},
