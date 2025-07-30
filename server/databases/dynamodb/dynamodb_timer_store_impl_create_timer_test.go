@@ -45,7 +45,7 @@ func TestCreateTimer_Basic(t *testing.T) {
 	assert.Nil(t, createErr)
 
 	// Verify the timer was inserted by reading it back
-	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
+	timerSortKey := GetTimerSortKey(namespace, timer.Id)
 	key := map[string]types.AttributeValue{
 		"shard_id": &types.AttributeValueMemberN{Value: "1"},
 		"sort_key": &types.AttributeValueMemberS{Value: timerSortKey},
@@ -103,7 +103,7 @@ func TestCreateTimer_WithPayload(t *testing.T) {
 	assert.Nil(t, createErr)
 
 	// Verify payload was serialized correctly
-	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
+	timerSortKey := GetTimerSortKey(namespace, timer.Id)
 	key := map[string]types.AttributeValue{
 		"shard_id": &types.AttributeValueMemberN{Value: "2"},
 		"sort_key": &types.AttributeValueMemberS{Value: timerSortKey},
@@ -160,7 +160,7 @@ func TestCreateTimer_WithRetryPolicy(t *testing.T) {
 	assert.Nil(t, createErr)
 
 	// Verify retry policy was serialized correctly
-	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
+	timerSortKey := GetTimerSortKey(namespace, timer.Id)
 	key := map[string]types.AttributeValue{
 		"shard_id": &types.AttributeValueMemberN{Value: "3"},
 		"sort_key": &types.AttributeValueMemberS{Value: timerSortKey},
@@ -214,7 +214,7 @@ func TestCreateTimer_ShardVersionMismatch(t *testing.T) {
 	assert.Equal(t, int64(0), createErr.ConflictShardVersion)
 
 	// Verify timer was not inserted
-	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
+	timerSortKey := GetTimerSortKey(namespace, timer.Id)
 	key := map[string]types.AttributeValue{
 		"shard_id": &types.AttributeValueMemberN{Value: "4"},
 		"sort_key": &types.AttributeValueMemberS{Value: timerSortKey},
@@ -343,7 +343,7 @@ func TestCreateTimerNoLock_Basic(t *testing.T) {
 	assert.Nil(t, createErr)
 
 	// Verify the timer was inserted by reading it back
-	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
+	timerSortKey := GetTimerSortKey(namespace, timer.Id)
 	key := map[string]types.AttributeValue{
 		"shard_id": &types.AttributeValueMemberN{Value: "10"},
 		"sort_key": &types.AttributeValueMemberS{Value: timerSortKey},
@@ -397,7 +397,7 @@ func TestCreateTimerNoLock_WithPayload(t *testing.T) {
 	assert.Nil(t, createErr)
 
 	// Verify payload was serialized correctly
-	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
+	timerSortKey := GetTimerSortKey(namespace, timer.Id)
 	key := map[string]types.AttributeValue{
 		"shard_id": &types.AttributeValueMemberN{Value: "11"},
 		"sort_key": &types.AttributeValueMemberS{Value: timerSortKey},
@@ -450,7 +450,7 @@ func TestCreateTimerNoLock_WithRetryPolicy(t *testing.T) {
 	assert.Nil(t, createErr)
 
 	// Verify retry policy was serialized correctly
-	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
+	timerSortKey := GetTimerSortKey(namespace, timer.Id)
 	key := map[string]types.AttributeValue{
 		"shard_id": &types.AttributeValueMemberN{Value: "12"},
 		"sort_key": &types.AttributeValueMemberS{Value: timerSortKey},
@@ -496,7 +496,7 @@ func TestCreateTimerNoLock_NilPayloadAndRetryPolicy(t *testing.T) {
 	assert.Nil(t, createErr)
 
 	// Verify timer was created (nil fields should be absent from DynamoDB item)
-	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
+	timerSortKey := GetTimerSortKey(namespace, timer.Id)
 	key := map[string]types.AttributeValue{
 		"shard_id": &types.AttributeValueMemberN{Value: "13"},
 		"sort_key": &types.AttributeValueMemberS{Value: timerSortKey},
@@ -653,7 +653,7 @@ func TestCreateTimer_DuplicateTimerOverwrite(t *testing.T) {
 	assert.Nil(t, updateErr1)
 
 	// 3. Verify count = 1 (all databases should have only one timer)
-	timerSortKey := fmt.Sprintf("TIMER#%s#%s", namespace, timerId)
+	timerSortKey := GetTimerSortKey(namespace, timerId)
 	scanInput1 := &dynamodb.ScanInput{
 		TableName:        aws.String(store.tableName),
 		FilterExpression: aws.String("shard_id = :shard_id AND begins_with(sort_key, :timer_prefix) AND timer_namespace = :namespace AND timer_id = :timer_id"),
@@ -754,7 +754,7 @@ func TestCreateTimerNoLock_DuplicateTimerOverwrite(t *testing.T) {
 	assert.Nil(t, createErr)
 
 	// Verify original timer was created
-	timerSortKey := fmt.Sprintf("TIMER#%s#%s", namespace, originalTimer.Id)
+	timerSortKey := GetTimerSortKey(namespace, originalTimer.Id)
 	getItemInput := &dynamodb.GetItemInput{
 		TableName: aws.String(store.tableName),
 		Key: map[string]types.AttributeValue{

@@ -25,6 +25,11 @@ const (
 	timerSortKeyPrefix = "TIMER#"
 )
 
+// GetTimerSortKey creates a consistent timer sort key format
+func GetTimerSortKey(namespace, timerId string) string {
+	return fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timerId)
+}
+
 // DynamoDBTimerStore implements TimerStore interface for DynamoDB
 type DynamoDBTimerStore struct {
 	client    *dynamodb.Client
@@ -284,8 +289,8 @@ func (d *DynamoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shard
 		retryPolicyJSON = &retryPolicyStr
 	}
 
-	// Create timer sort key: TIMER#<namespace>#<timer_id>
-	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
+	
+	timerSortKey := GetTimerSortKey(namespace, timer.Id)
 
 	// Create composite execute_at_with_uuid field for predictable pagination
 	executeAtWithUuid := databases.FormatExecuteAtWithUuid(timer.ExecuteAt, timer.TimerUuid.String())
@@ -382,8 +387,8 @@ func (d *DynamoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int,
 		retryPolicyJSON = &retryPolicyStr
 	}
 
-	// Create timer sort key: TIMER#<namespace>#<timer_id>
-	timerSortKey := fmt.Sprintf("%s%s#%s", timerSortKeyPrefix, namespace, timer.Id)
+	
+	timerSortKey := GetTimerSortKey(namespace, timer.Id)
 
 	// Create composite execute_at_with_uuid field for predictable pagination
 	executeAtWithUuid := databases.FormatExecuteAtWithUuid(timer.ExecuteAt, timer.TimerUuid.String())
@@ -555,7 +560,6 @@ func (d *DynamoDBTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx contex
 	deletedCount := len(result.Items)
 
 	// Prepare shard key for condition check
-	shardSortKey := databases.FormatExecuteAtWithUuid(databases.ZeroTimestamp, databases.ZeroUUIDString)
 	shardKey := map[string]types.AttributeValue{
 		"shard_id": &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
 		"sort_key": &types.AttributeValueMemberS{Value: shardSortKey},
@@ -618,8 +622,7 @@ func (d *DynamoDBTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx contex
 			retryPolicyJSON = &retryPolicyStr
 		}
 
-		// Create composite sort key for timer
-		timerSortKey := databases.FormatExecuteAtWithUuid(timer.ExecuteAt, timer.TimerUuid.String())
+		timerSortKey := GetTimerSortKey(timer.Namespace, timer.Id)
 
 		// Create composite execute_at_with_uuid field for LSI
 		executeAtWithUuid := databases.FormatExecuteAtWithUuid(timer.ExecuteAt, timer.TimerUuid.String())
@@ -670,34 +673,7 @@ func (d *DynamoDBTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx contex
 			}
 			return nil, databases.NewGenericDbError("failed to execute atomic delete and insert transaction", transactErr)
 		}
-	} else if len(transactItems) == 1 {
-		// Only shard check, just verify the shard version exists
-		shardCheckInput := &dynamodb.GetItemInput{
-			TableName: aws.String(c.tableName),
-			Key:       shardKey,
-		}
-
-		shardResult, shardErr := c.client.GetItem(ctx, shardCheckInput)
-		if shardErr != nil {
-			return nil, databases.NewGenericDbError("failed to verify shard", shardErr)
-		}
-
-		if shardResult.Item == nil {
-			return nil, databases.NewGenericDbError("shard record does not exist", nil)
-		}
-
-		actualVersion, versionErr := extractShardVersionFromItem(shardResult.Item)
-		if versionErr != nil {
-			return nil, databases.NewGenericDbError("failed to extract shard version", versionErr)
-		}
-
-		if actualVersion != shardVersion {
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: actualVersion,
-			}
-			return nil, databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete and insert operation", nil, conflictInfo)
-		}
-	}
+	} 
 
 	return &databases.RangeDeleteTimersResponse{
 		DeletedCount: deletedCount,
