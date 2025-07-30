@@ -162,12 +162,12 @@ services:
     entrypoint: >
       sh -c "
         echo 'Waiting for replica set to be ready...' &&
-        until mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval 'rs.status().ok && db.runCommand({ping:1}).ok' --quiet; do
+        until mongosh --host mongodb --eval 'rs.status().ok && db.runCommand({ping:1}).ok' --quiet; do
           echo 'Replica set not ready, waiting...'
           sleep 2
         done &&
         echo 'Creating timer_service database and user...' &&
-        mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin --eval '
+        mongosh --host mongodb --eval '
           use timer_service;
           try {
             db.createUser({
@@ -184,8 +184,8 @@ services:
             }
           }
         ' &&
-        echo 'Executing schema with root user...' &&
-        mongosh --host mongodb --username root --password mongodb_root_password --authenticationDatabase admin timer_service < /schema/v1.js &&
+        echo 'Executing schema...' &&
+        mongosh --host mongodb timer_service < /schema/v1.js &&
         echo 'Schema execution completed successfully!'
       "
 
