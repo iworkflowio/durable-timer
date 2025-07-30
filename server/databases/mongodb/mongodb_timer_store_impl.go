@@ -516,8 +516,164 @@ func (c *MongoDBTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId 
 }
 
 func (c *MongoDBTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+	// Convert start and end UUIDs to high/low format for precise range selection
+	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
+	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+
+	// Use MongoDB transaction to atomically check shard version, delete timers, and insert new ones
+	session, sessionErr := c.client.StartSession()
+	if sessionErr != nil {
+		return nil, databases.NewGenericDbError("failed to start MongoDB session", sessionErr)
+	}
+	defer session.EndSession(ctx)
+
+	var result *databases.RangeDeleteTimersResponse
+	var dbErr *databases.DbError
+
+	transactionErr := mongo.WithSession(ctx, session, func(sc mongo.SessionContext) error {
+		// Start transaction
+		if startErr := session.StartTransaction(); startErr != nil {
+			return startErr
+		}
+
+		// Read the shard to verify version
+		shardFilter := bson.M{
+			"shard_id":         shardId,
+			"row_type":         databases.RowTypeShard,
+			"timer_execute_at": databases.ZeroTimestamp,
+			"timer_uuid_high":  zeroUuidHigh,
+			"timer_uuid_low":   zeroUuidLow,
+		}
+
+		var shardDoc bson.M
+		shardErr := c.collection.FindOne(sc, shardFilter).Decode(&shardDoc)
+		if shardErr != nil {
+			if errors.Is(shardErr, mongo.ErrNoDocuments) {
+				// Shard doesn't exist
+				dbErr = databases.NewGenericDbError("shard record does not exist", nil)
+				return nil
+			}
+			dbErr = databases.NewGenericDbError("failed to read shard", shardErr)
+			return nil
+		}
+
+		// Get actual shard version and compare
+		actualShardVersion := getInt64FromBSON(shardDoc, "shard_version")
+		if actualShardVersion != shardVersion {
+			// Version mismatch
+			conflictInfo := &databases.ShardInfo{
+				ShardVersion: actualShardVersion,
+			}
+			dbErr = databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete and insert operation", nil, conflictInfo)
+			return nil
+		}
+
+		// Count timers to be deleted
+		deleteFilter := bson.M{
+			"shard_id": shardId,
+			"row_type": databases.RowTypeTimer,
+			"$or": []bson.M{
+				{
+					"timer_execute_at": bson.M{"$gt": request.StartTimestamp},
+				},
+				{
+					"timer_execute_at": request.StartTimestamp,
+					"timer_uuid_high":  bson.M{"$gt": startUuidHigh},
+				},
+				{
+					"timer_execute_at": request.StartTimestamp,
+					"timer_uuid_high":  startUuidHigh,
+					"timer_uuid_low":   bson.M{"$gte": startUuidLow},
+				},
+			},
+		}
+
+		// Add upper bound constraint
+		deleteFilter["$and"] = []bson.M{
+			{
+				"$or": []bson.M{
+					{
+						"timer_execute_at": bson.M{"$lt": request.EndTimestamp},
+					},
+					{
+						"timer_execute_at": request.EndTimestamp,
+						"timer_uuid_high":  bson.M{"$lt": endUuidHigh},
+					},
+					{
+						"timer_execute_at": request.EndTimestamp,
+						"timer_uuid_high":  endUuidHigh,
+						"timer_uuid_low":   bson.M{"$lte": endUuidLow},
+					},
+				},
+			},
+		}
+
+		deleteResult, deleteErr := c.collection.DeleteMany(sc, deleteFilter)
+		if deleteErr != nil {
+			dbErr = databases.NewGenericDbError("failed to delete timers", deleteErr)
+			return nil
+		}
+
+		// Insert new timers
+		for _, timer := range TimersToInsert {
+			timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timer.TimerUuid)
+
+			// Serialize payload and retry policy to JSON
+			var payloadJSON, retryPolicyJSON interface{}
+
+			if timer.Payload != nil {
+				payloadBytes, marshalErr := json.Marshal(timer.Payload)
+				if marshalErr != nil {
+					dbErr = databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+					return nil
+				}
+				payloadJSON = string(payloadBytes)
+			}
+
+			if timer.RetryPolicy != nil {
+				retryPolicyBytes, marshalErr := json.Marshal(timer.RetryPolicy)
+				if marshalErr != nil {
+					dbErr = databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+					return nil
+				}
+				retryPolicyJSON = string(retryPolicyBytes)
+			}
+
+			timerDoc := c.buildTimerDocumentForUpsert(shardId, timer, timerUuidHigh, timerUuidLow, payloadJSON, retryPolicyJSON)
+
+			_, insertErr := c.collection.InsertOne(sc, timerDoc)
+			if insertErr != nil {
+				dbErr = databases.NewGenericDbError("failed to insert timer", insertErr)
+				return nil
+			}
+		}
+
+		// Commit transaction
+		if commitErr := session.CommitTransaction(sc); commitErr != nil {
+			dbErr = databases.NewGenericDbError("failed to commit transaction", commitErr)
+			return nil
+		}
+
+		result = &databases.RangeDeleteTimersResponse{
+			DeletedCount: int(deleteResult.DeletedCount),
+		}
+
+		return nil
+	})
+
+	if transactionErr != nil {
+		session.AbortTransaction(ctx)
+		return nil, databases.NewGenericDbError("transaction failed", transactionErr)
+	}
+
+	if dbErr != nil {
+		return nil, dbErr
+	}
+
+	return result, nil
 }
 
 func (c *MongoDBTimerStore) BatchInsertTimers(ctx context.Context, shardId int, shardVersion int64, TimersToInsert []*databases.DbTimer) *databases.DbError {

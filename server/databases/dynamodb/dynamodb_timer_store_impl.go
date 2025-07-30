@@ -522,9 +522,186 @@ func (d *DynamoDBTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId
 	}, nil
 }
 
-func (c *DynamoDBTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+func (d *DynamoDBTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
+	// Create bounds for execute_at_with_uuid comparison
+	lowerBound := databases.FormatExecuteAtWithUuid(request.StartTimestamp, request.StartTimeUuid.String())
+	upperBound := databases.FormatExecuteAtWithUuid(request.EndTimestamp, request.EndTimeUuid.String())
+
+	// First, query timers to delete to get their exact keys
+	// TODO: this is not efficient, ideally it should use a range delete instead
+	// However, DynamoDB does not support range delete, so we need to use a query and delete one by one
+	// In the future, we should just pass in the timers directly and delete timers using batch delete, without querying
+	queryInput := &dynamodb.QueryInput{
+		TableName:              aws.String(d.tableName),
+		IndexName:              aws.String("ExecuteAtWithUuidIndex"),
+		KeyConditionExpression: aws.String("shard_id = :shard_id AND timer_execute_at_with_uuid BETWEEN :lower_bound AND :upper_bound"),
+		FilterExpression:       aws.String("row_type = :timer_row_type"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":shard_id":       &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+			":lower_bound":    &types.AttributeValueMemberS{Value: lowerBound},
+			":upper_bound":    &types.AttributeValueMemberS{Value: upperBound},
+			":timer_row_type": &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeTimer))},
+		},
+		ScanIndexForward: aws.Bool(true),
+	}
+
+	result, err := d.client.Query(ctx, queryInput)
+	if err != nil {
+		return nil, databases.NewGenericDbError("failed to query timers to delete", err)
+	}
+
+	// Build list of transaction write items
+	var transactItems []types.TransactWriteItem
+	deletedCount := len(result.Items)
+
+	// Prepare shard key for condition check
+	shardSortKey := databases.FormatExecuteAtWithUuid(databases.ZeroTimestamp, databases.ZeroUUIDString)
+	shardKey := map[string]types.AttributeValue{
+		"shard_id": &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+		"sort_key": &types.AttributeValueMemberS{Value: shardSortKey},
+	}
+
+	// Add shard version check
+	transactItems = append(transactItems, types.TransactWriteItem{
+		ConditionCheck: &types.ConditionCheck{
+			TableName:           aws.String(d.tableName),
+			Key:                 shardKey,
+			ConditionExpression: aws.String("shard_version = :expected_version"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":expected_version": &types.AttributeValueMemberN{Value: strconv.FormatInt(shardVersion, 10)},
+			},
+		},
+	})
+
+	// Add delete operations for found timers
+	for _, item := range result.Items {
+		sortKeyAttr, sortKeyExists := item["sort_key"]
+		shardIdAttr, shardIdExists := item["shard_id"]
+
+		if !sortKeyExists || !shardIdExists {
+			return nil, databases.NewGenericDbError("missing required key attributes in timer item", nil)
+		}
+
+		itemKey := map[string]types.AttributeValue{
+			"shard_id": shardIdAttr,
+			"sort_key": sortKeyAttr,
+		}
+
+		transactItems = append(transactItems, types.TransactWriteItem{
+			Delete: &types.Delete{
+				TableName: aws.String(d.tableName),
+				Key:       itemKey,
+			},
+		})
+	}
+
+	// Add insert operations for new timers
+	for _, timer := range TimersToInsert {
+		// Serialize payload and retry policy to JSON
+		var payloadJSON, retryPolicyJSON *string
+
+		if timer.Payload != nil {
+			payloadBytes, marshalErr := json.Marshal(timer.Payload)
+			if marshalErr != nil {
+				return nil, databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+			}
+			payloadStr := string(payloadBytes)
+			payloadJSON = &payloadStr
+		}
+
+		if timer.RetryPolicy != nil {
+			retryPolicyBytes, marshalErr := json.Marshal(timer.RetryPolicy)
+			if marshalErr != nil {
+				return nil, databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+			}
+			retryPolicyStr := string(retryPolicyBytes)
+			retryPolicyJSON = &retryPolicyStr
+		}
+
+		// Create composite sort key for timer
+		timerSortKey := databases.FormatExecuteAtWithUuid(timer.ExecuteAt, timer.TimerUuid.String())
+
+		// Create composite execute_at_with_uuid field for LSI
+		executeAtWithUuid := databases.FormatExecuteAtWithUuid(timer.ExecuteAt, timer.TimerUuid.String())
+
+		timerItem := map[string]types.AttributeValue{
+			"shard_id":                       &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+			"sort_key":                       &types.AttributeValueMemberS{Value: timerSortKey},
+			"row_type":                       &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeTimer))},
+			"timer_execute_at_with_uuid":     &types.AttributeValueMemberS{Value: executeAtWithUuid},
+			"timer_id":                       &types.AttributeValueMemberS{Value: timer.Id},
+			"timer_namespace":                &types.AttributeValueMemberS{Value: timer.Namespace},
+			"timer_callback_url":             &types.AttributeValueMemberS{Value: timer.CallbackUrl},
+			"timer_callback_timeout_seconds": &types.AttributeValueMemberN{Value: strconv.Itoa(int(timer.CallbackTimeoutSeconds))},
+			"timer_created_at":               &types.AttributeValueMemberS{Value: timer.CreatedAt.Format(time.RFC3339Nano)},
+			"timer_attempts":                 &types.AttributeValueMemberN{Value: "0"},
+		}
+
+		if payloadJSON != nil {
+			timerItem["timer_payload"] = &types.AttributeValueMemberS{Value: *payloadJSON}
+		}
+
+		if retryPolicyJSON != nil {
+			timerItem["timer_retry_policy"] = &types.AttributeValueMemberS{Value: *retryPolicyJSON}
+		}
+
+		transactItems = append(transactItems, types.TransactWriteItem{
+			Put: &types.Put{
+				TableName: aws.String(d.tableName),
+				Item:      timerItem,
+			},
+		})
+	}
+
+	// Execute the transaction if there are any operations beyond the shard check
+	if len(transactItems) > 1 {
+		transactInput := &dynamodb.TransactWriteItemsInput{
+			TransactItems: transactItems,
+		}
+
+		_, transactErr := d.client.TransactWriteItems(ctx, transactInput)
+		if transactErr != nil {
+			if isConditionalCheckFailedException(transactErr) {
+				// Shard version mismatch
+				conflictInfo := &databases.ShardInfo{
+					ShardVersion: 0, // Unknown version to avoid expensive read
+				}
+				return nil, databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete and insert operation", nil, conflictInfo)
+			}
+			return nil, databases.NewGenericDbError("failed to execute atomic delete and insert transaction", transactErr)
+		}
+	} else if len(transactItems) == 1 {
+		// Only shard check, just verify the shard version exists
+		shardCheckInput := &dynamodb.GetItemInput{
+			TableName: aws.String(c.tableName),
+			Key:       shardKey,
+		}
+
+		shardResult, shardErr := c.client.GetItem(ctx, shardCheckInput)
+		if shardErr != nil {
+			return nil, databases.NewGenericDbError("failed to verify shard", shardErr)
+		}
+
+		if shardResult.Item == nil {
+			return nil, databases.NewGenericDbError("shard record does not exist", nil)
+		}
+
+		actualVersion, versionErr := extractShardVersionFromItem(shardResult.Item)
+		if versionErr != nil {
+			return nil, databases.NewGenericDbError("failed to extract shard version", versionErr)
+		}
+
+		if actualVersion != shardVersion {
+			conflictInfo := &databases.ShardInfo{
+				ShardVersion: actualVersion,
+			}
+			return nil, databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete and insert operation", nil, conflictInfo)
+		}
+	}
+
+	return &databases.RangeDeleteTimersResponse{
+		DeletedCount: deletedCount,
+	}, nil
 }
 
 func (c *DynamoDBTimerStore) BatchInsertTimers(ctx context.Context, shardId int, shardVersion int64, TimersToInsert []*databases.DbTimer) *databases.DbError {
