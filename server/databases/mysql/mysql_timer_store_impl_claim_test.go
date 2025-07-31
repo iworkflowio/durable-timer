@@ -23,7 +23,7 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 1
-	ownerId := "test-owner-123"
+	ownerAddr := "test-owner-123"
 	metadata := map[string]interface{}{
 		"region": "us-west-2",
 		"zone":   "us-west-2a",
@@ -33,7 +33,7 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Claim ownership of a new shard
-	version, err := store.ClaimShardOwnership(ctx, shardId, ownerId, metadata)
+	version, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, metadata)
 
 	// Verify success
 	assert.Nil(t, err)
@@ -41,15 +41,15 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 
 	// Verify the shard was created correctly in the database
 	var dbVersion int64
-	var dbOwnerId string
+	var dbOwnerAddr string
 	var dbMetadata string
 	var dbClaimedAt time.Time
 	query := "SELECT shard_version, shard_owner_addr, shard_metadata, shard_claimed_at FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?"
-	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerId, &dbMetadata, &dbClaimedAt)
+	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerAddr, &dbMetadata, &dbClaimedAt)
 
 	require.NoError(t, scanErr)
 	assert.Equal(t, int64(1), dbVersion)
-	assert.Equal(t, ownerId, dbOwnerId)
+	assert.Equal(t, ownerAddr, dbOwnerAddr)
 	assert.Contains(t, dbMetadata, "us-west-2")
 	assert.Contains(t, dbMetadata, "us-west-2a")
 	assert.True(t, time.Since(dbClaimedAt) < 5*time.Second, "claimed_at should be recent")
@@ -82,13 +82,13 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 
 	// Verify final state
 	var dbVersion int64
-	var dbOwnerId string
+	var dbOwnerAddr string
 	query := "SELECT shard_version, shard_owner_addr FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?"
-	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerId)
+	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerAddr)
 
 	require.NoError(t, scanErr)
 	assert.Equal(t, int64(3), dbVersion)
-	assert.Equal(t, "owner-1", dbOwnerId)
+	assert.Equal(t, "owner-1", dbOwnerAddr)
 }
 
 func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
@@ -103,7 +103,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 	results := make([]struct {
 		version int64
 		err     *databases.DbError
-		ownerId string
+		ownerAddr string
 	}, numGoroutines)
 
 	// Launch concurrent claims
@@ -115,13 +115,13 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 				// sleep for 100 ms to run into the update case
 				time.Sleep(100 * time.Millisecond)
 			}
-			ownerId := fmt.Sprintf("owner-%d", idx)
-			version, err := store.ClaimShardOwnership(ctx, shardId, ownerId, map[string]int{"attempt": idx})
+			ownerAddr := fmt.Sprintf("owner-%d", idx)
+			version, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, map[string]int{"attempt": idx})
 			results[idx] = struct {
 				version int64
 				err     *databases.DbError
-				ownerId string
-			}{version, err, ownerId}
+				ownerAddr string
+			}{version, err, ownerAddr}
 		}(i)
 	}
 
@@ -138,7 +138,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 			successCount++
 			if result.version > maxVersion {
 				maxVersion = result.version
-				lastSuccessfulOwner = result.ownerId
+				lastSuccessfulOwner = result.ownerAddr
 			}
 		} else {
 			failureCount++
@@ -157,13 +157,13 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 
 	// Verify final database state
 	var dbVersion int64
-	var dbOwnerId string
+	var dbOwnerAddr string
 	query := "SELECT shard_version, shard_owner_addr FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?"
-	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerId)
+	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerAddr)
 
 	require.NoError(t, scanErr)
 	assert.Equal(t, maxVersion, dbVersion, "Database version should match highest successful claim")
-	assert.Equal(t, lastSuccessfulOwner, dbOwnerId, "Database owner should match last successful claimer")
+	assert.Equal(t, lastSuccessfulOwner, dbOwnerAddr, "Database owner should match last successful claimer")
 }
 
 func TestClaimShardOwnership_NilMetadata(t *testing.T) {
@@ -172,10 +172,10 @@ func TestClaimShardOwnership_NilMetadata(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 4
-	ownerId := "owner-nil-metadata"
+	ownerAddr := "owner-nil-metadata"
 
 	// Claim with nil metadata
-	version, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	version, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 
 	assert.Nil(t, err)
 	assert.Equal(t, int64(1), version)
@@ -204,7 +204,7 @@ func TestClaimShardOwnership_ComplexMetadata(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 5
-	ownerId := "owner-complex"
+	ownerAddr := "owner-complex"
 
 	complexMetadata := map[string]interface{}{
 		"instanceId": "i-1234567890abcdef0",
@@ -219,7 +219,7 @@ func TestClaimShardOwnership_ComplexMetadata(t *testing.T) {
 	}
 
 	// Claim with complex metadata
-	version, err := store.ClaimShardOwnership(ctx, shardId, ownerId, complexMetadata)
+	version, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, complexMetadata)
 
 	assert.Nil(t, err)
 	assert.Equal(t, int64(1), version)

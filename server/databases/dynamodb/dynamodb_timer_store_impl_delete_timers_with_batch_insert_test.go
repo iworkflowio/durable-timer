@@ -25,8 +25,8 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_Basic(t *testing.T) {
 	namespace := "test_namespace"
 
 	// First, create a shard record
-	ownerId := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	ownerAddr := "owner-1"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 

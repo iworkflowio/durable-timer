@@ -22,8 +22,8 @@ func TestCreateTimer_Basic(t *testing.T) {
 	namespace := "test_namespace"
 
 	// First, create a shard record
-	ownerId := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	ownerAddr := "owner-1"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -71,8 +71,8 @@ func TestCreateTimer_WithPayload(t *testing.T) {
 	namespace := "test_namespace"
 
 	// First, create a shard record
-	ownerId := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	ownerAddr := "owner-1"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 	require.Nil(t, err)
 
 	// Create a timer with payload
@@ -124,8 +124,8 @@ func TestCreateTimer_WithRetryPolicy(t *testing.T) {
 	namespace := "test_namespace"
 
 	// Create shard record
-	ownerId := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	ownerAddr := "owner-1"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 	require.Nil(t, err)
 
 	// Create timer with retry policy
@@ -178,8 +178,8 @@ func TestCreateTimer_ShardVersionMismatch(t *testing.T) {
 	namespace := "test_namespace"
 
 	// Create shard record
-	ownerId := "owner-1"
-	actualShardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	ownerAddr := "owner-1"
+	actualShardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 	require.Nil(t, err)
 
 	// Create timer with wrong shard version
@@ -223,8 +223,8 @@ func TestCreateTimer_ConcurrentCreation(t *testing.T) {
 	namespace := "test_namespace"
 
 	// Create shard record
-	ownerId := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	ownerAddr := "owner-1"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 	require.Nil(t, err)
 
 	// Create multiple timers concurrently
@@ -329,8 +329,8 @@ func TestCreateTimer_DuplicateTimerOverwrite(t *testing.T) {
 	alternateUuid := databases.GenerateTimerUUID(namespace, timerId+"_alt")
 
 	// Create shard record
-	ownerId := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	ownerAddr := "owner-1"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 	require.Nil(t, err)
 
 	// 1. Create original timer

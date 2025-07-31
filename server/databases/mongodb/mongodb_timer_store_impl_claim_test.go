@@ -24,7 +24,7 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 1
-	ownerId := "test-owner-123"
+	ownerAddr := "test-owner-123"
 	metadata := map[string]interface{}{
 		"region": "us-west-2",
 		"zone":   "us-west-2a",
@@ -34,7 +34,7 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Claim ownership of a new shard
-	version, err := store.ClaimShardOwnership(ctx, shardId, ownerId, metadata)
+	version, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, metadata)
 
 	assert.Nil(t, err)
 	assert.Equal(t, int64(1), version, "New shard should start with version 1")
@@ -53,7 +53,7 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 
 	require.NoError(t, findErr)
 	assert.Equal(t, int64(1), getInt64FromBSON(result, "shard_version"))
-	assert.Equal(t, ownerId, getStringFromBSON(result, "shard_owner_addr"))
+	assert.Equal(t, ownerAddr, getStringFromBSON(result, "shard_owner_addr"))
 
 	metadataStr := getStringFromBSON(result, "shard_metadata")
 	assert.Contains(t, metadataStr, "us-west-2")
@@ -117,7 +117,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 	results := make([]struct {
 		version int64
 		err     *databases.DbError
-		ownerId string
+		ownerAddr string
 	}, numGoroutines)
 
 	// Launch concurrent claims
@@ -129,13 +129,13 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 				// sleep for 100 ms to run into the update case
 				time.Sleep(100 * time.Millisecond)
 			}
-			ownerId := fmt.Sprintf("owner-%d", idx)
-			version, err := store.ClaimShardOwnership(ctx, shardId, ownerId, map[string]int{"attempt": idx})
+			ownerAddr := fmt.Sprintf("owner-%d", idx)
+			version, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, map[string]int{"attempt": idx})
 			results[idx] = struct {
 				version int64
 				err     *databases.DbError
-				ownerId string
-			}{version, err, ownerId}
+				ownerAddr string
+			}{version, err, ownerAddr}
 		}(i)
 	}
 
@@ -152,7 +152,7 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 			successCount++
 			if result.version > maxVersion {
 				maxVersion = result.version
-				lastSuccessfulOwner = result.ownerId
+				lastSuccessfulOwner = result.ownerAddr
 			}
 		} else {
 			failureCount++
@@ -192,10 +192,10 @@ func TestClaimShardOwnership_NilMetadata(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 4
-	ownerId := "owner-nil-metadata"
+	ownerAddr := "owner-nil-metadata"
 
 	// Claim with nil metadata
-	version, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	version, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 
 	assert.Nil(t, err)
 	assert.Equal(t, int64(1), version)
@@ -230,7 +230,7 @@ func TestClaimShardOwnership_ComplexMetadata(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 5
-	ownerId := "owner-complex"
+	ownerAddr := "owner-complex"
 
 	complexMetadata := map[string]interface{}{
 		"instanceId": "i-1234567890abcdef0",
@@ -245,7 +245,7 @@ func TestClaimShardOwnership_ComplexMetadata(t *testing.T) {
 	}
 
 	// Claim with complex metadata
-	version, err := store.ClaimShardOwnership(ctx, shardId, ownerId, complexMetadata)
+	version, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, complexMetadata)
 
 	assert.Nil(t, err)
 	assert.Equal(t, int64(1), version)

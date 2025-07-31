@@ -76,12 +76,12 @@ func (p *PostgreSQLTimerStore) ClaimShardOwnership(
 
 	// First, try to read the current shard record from unified timers table
 	var currentVersion int64
-	var currentOwnerId string
+	var currentOwnerAddr string
 	query := `SELECT shard_version, shard_owner_addr FROM timers 
 	          WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5`
 
 	err := p.db.QueryRowContext(ctx, query, shardId, databases.RowTypeShard,
-		databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&currentVersion, &currentOwnerId)
+		databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&currentVersion, &currentOwnerAddr)
 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, databases.NewGenericDbError("failed to read shard record", err)
@@ -103,7 +103,7 @@ func (p *PostgreSQLTimerStore) ClaimShardOwnership(
 			if isDuplicateKeyError(err) {
 				// Try to read the existing record to return conflict info
 				var conflictVersion int64
-				var conflictOwnerId string
+				var conflictOwnerAddr string
 				var conflictClaimedAt time.Time
 				var conflictMetadata string
 
@@ -111,12 +111,12 @@ func (p *PostgreSQLTimerStore) ClaimShardOwnership(
 				                  FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5`
 
 				conflictErr := p.db.QueryRowContext(ctx, conflictQuery, shardId, databases.RowTypeShard,
-					databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&conflictVersion, &conflictOwnerId, &conflictClaimedAt, &conflictMetadata)
+					databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&conflictVersion, &conflictOwnerAddr, &conflictClaimedAt, &conflictMetadata)
 
 				if conflictErr == nil {
 					conflictInfo := &databases.ShardInfo{
 						ShardId:      int64(shardId),
-						OwnerAddr:    conflictOwnerId,
+						OwnerAddr:    conflictOwnerAddr,
 						ClaimedAt:    conflictClaimedAt,
 						Metadata:     conflictMetadata,
 						ShardVersion: conflictVersion,

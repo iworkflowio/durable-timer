@@ -65,9 +65,9 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 
 	// First, try to read the current shard record from unified timers table
 	var currentVersion int64
-	var currentOwnerId string
+	var currentOwnerAddr string
 	query := `SELECT shard_version, shard_owner_addr FROM timers WHERE shard_id = ? AND row_type = ?`
-	err := c.session.Query(query, shardId, databases.RowTypeShard).WithContext(ctx).Scan(&currentVersion, &currentOwnerId)
+	err := c.session.Query(query, shardId, databases.RowTypeShard).WithContext(ctx).Scan(&currentVersion, &currentOwnerAddr)
 
 	if err != nil && !errors.Is(err, gocql.ErrNotFound) {
 		return 0, databases.NewGenericDbError("failed to read shard record: %w", err)

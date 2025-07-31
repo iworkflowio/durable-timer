@@ -20,8 +20,8 @@ func TestGetTimersUpToTimestamp_Basic(t *testing.T) {
 	namespace := "test_namespace"
 
 	// First, create a shard record
-	ownerId := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	ownerAddr := "owner-1"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -90,8 +90,8 @@ func TestGetTimersUpToTimestamp_WithLimit(t *testing.T) {
 	namespace := "test_namespace"
 
 	// Create shard record
-	ownerId := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	ownerAddr := "owner-1"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 	require.Nil(t, err)
 
 	// Create 5 timers
@@ -136,8 +136,8 @@ func TestGetTimersUpToTimestamp_WithPayloadAndRetryPolicy(t *testing.T) {
 	namespace := "test_namespace"
 
 	// Create shard record
-	ownerId := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	ownerAddr := "owner-1"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 	require.Nil(t, err)
 
 	// Create timer with payload and retry policy
@@ -207,8 +207,8 @@ func TestGetTimersUpToTimestamp_EmptyResult(t *testing.T) {
 	shardId := 1
 
 	// Create shard record but no timers
-	ownerId := "owner-1"
-	_, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	ownerAddr := "owner-1"
+	_, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 	require.Nil(t, err)
 
 	// Query for timers
@@ -232,8 +232,8 @@ func TestGetTimersUpToTimestamp_TimeOrdering(t *testing.T) {
 	namespace := "test_namespace"
 
 	// Create shard record
-	ownerId := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerId, nil)
+	ownerAddr := "owner-1"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
 	require.Nil(t, err)
 
 	// Create timers in non-sequential order
