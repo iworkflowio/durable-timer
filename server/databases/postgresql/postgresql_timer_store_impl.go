@@ -11,7 +11,6 @@ import (
 	"github.com/iworkflowio/durable-timer/config"
 	"github.com/iworkflowio/durable-timer/databases"
 	"github.com/lib/pq"
-	_ "github.com/lib/pq"
 )
 
 // PostgreSQLTimerStore implements TimerStore interface for PostgreSQL
