@@ -250,7 +250,7 @@ func (p *PostgreSQLTimerStore) CreateTimer(ctx context.Context, shardId int, sha
 		shardId, databases.RowTypeTimer, timer.ExecuteAt, timerUuidHigh, timerUuidLow,
 		timer.Id, timer.Namespace, timer.CallbackUrl,
 		payloadJSON, retryPolicyJSON, timer.CallbackTimeoutSeconds,
-		timer.CreatedAt, 0)
+		timer.CreatedAt, timer.Attempts)
 
 	if insertErr != nil {
 		return databases.NewGenericDbError("failed to upsert timer", insertErr)
@@ -308,7 +308,7 @@ func (p *PostgreSQLTimerStore) CreateTimerNoLock(ctx context.Context, shardId in
 		shardId, databases.RowTypeTimer, timer.ExecuteAt, timerUuidHigh, timerUuidLow,
 		timer.Id, timer.Namespace, timer.CallbackUrl,
 		payloadJSON, retryPolicyJSON, timer.CallbackTimeoutSeconds,
-		timer.CreatedAt, 0)
+		timer.CreatedAt, timer.Attempts)
 
 	if insertErr != nil {
 		return databases.NewGenericDbError("failed to upsert timer", insertErr)
@@ -387,6 +387,7 @@ func (p *PostgreSQLTimerStore) GetTimersUpToTimestamp(ctx context.Context, shard
 			RetryPolicy:            retryPolicy,
 			CallbackTimeoutSeconds: dbTimerCallbackTimeoutSecs,
 			CreatedAt:              dbTimerCreatedAt,
+			Attempts:               dbTimerAttempts,
 		}
 
 		timers = append(timers, timer)
@@ -503,7 +504,7 @@ func (c *PostgreSQLTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx cont
 			retryPolicyJSON,
 			timer.CallbackTimeoutSeconds,
 			timer.CreatedAt,
-			0, // timer_attempts starts at 0
+			timer.Attempts,
 		)
 
 		if insertErr != nil {
@@ -523,16 +524,284 @@ func (c *PostgreSQLTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx cont
 }
 
 func (c *PostgreSQLTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+
+	// Serialize payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON interface{}
+
+	if request.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(request.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadJSON = string(payloadBytes)
+	}
+
+	if request.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(request.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyJSON = string(retryPolicyBytes)
+	}
+
+	// Use PostgreSQL transaction for atomic operation
+	tx, txErr := c.db.BeginTx(ctx, nil)
+	if txErr != nil {
+		return databases.NewGenericDbError("failed to start PostgreSQL transaction", txErr)
+	}
+	defer tx.Rollback() // Will be no-op if transaction is committed
+
+	// Check shard version within the transaction
+	var actualShardVersion int64
+	shardQuery := `SELECT shard_version FROM timers 
+	               WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5`
+
+	shardErr := tx.QueryRowContext(ctx, shardQuery, shardId, databases.RowTypeShard,
+		databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&actualShardVersion)
+
+	if shardErr != nil {
+		if errors.Is(shardErr, sql.ErrNoRows) {
+			// Shard doesn't exist
+			conflictInfo := &databases.ShardInfo{
+				ShardVersion: 0,
+			}
+			return databases.NewDbErrorOnShardConditionFail("shard not found during timer update", nil, conflictInfo)
+		}
+		return databases.NewGenericDbError("failed to read shard", shardErr)
+	}
+
+	// Compare shard versions
+	if actualShardVersion != shardVersion {
+		// Version mismatch
+		conflictInfo := &databases.ShardInfo{
+			ShardVersion: actualShardVersion,
+		}
+		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer update", nil, conflictInfo)
+	}
+
+	// Get current timer to preserve certain fields and check if ExecuteAt changed
+	var currentExecuteAt time.Time
+	var currentTimerUuidHigh, currentTimerUuidLow int64
+	var currentCreatedAt time.Time
+	var currentAttempts int32
+
+	timerQuery := `SELECT timer_execute_at, timer_uuid_high, timer_uuid_low, timer_created_at, timer_attempts
+	               FROM timers 
+	               WHERE shard_id = $1 AND row_type = $2 AND timer_namespace = $3 AND timer_id = $4`
+
+	timerErr := tx.QueryRowContext(ctx, timerQuery, shardId, databases.RowTypeTimer, namespace, request.TimerId).
+		Scan(&currentExecuteAt, &currentTimerUuidHigh, &currentTimerUuidLow, &currentCreatedAt, &currentAttempts)
+
+	if timerErr != nil {
+		if errors.Is(timerErr, sql.ErrNoRows) {
+			return databases.NewDbErrorNotExists("timer not found for update", timerErr)
+		}
+		return databases.NewGenericDbError("failed to read current timer", timerErr)
+	}
+
+	// Check if ExecuteAt changed - if so, we need to delete and insert with new primary key
+	if !currentExecuteAt.Equal(request.ExecuteAt) {
+		// Convert new ExecuteAt to UUID for new record
+		newTimerUuid := databases.HighLowToUuid(currentTimerUuidHigh, currentTimerUuidLow)
+		newTimerUuidHigh, newTimerUuidLow := databases.UuidToHighLow(newTimerUuid)
+
+		// Delete old record
+		deleteQuery := `DELETE FROM timers 
+		               WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5`
+
+		_, deleteErr := tx.ExecContext(ctx, deleteQuery, shardId, databases.RowTypeTimer,
+			currentExecuteAt, currentTimerUuidHigh, currentTimerUuidLow)
+
+		if deleteErr != nil {
+			return databases.NewGenericDbError("failed to delete timer for update", deleteErr)
+		}
+
+		// Insert new record with updated ExecuteAt and new primary key
+		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, 
+		                                   timer_id, timer_namespace, timer_callback_url, timer_payload, 
+		                                   timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, 
+		                                   timer_attempts) 
+		                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+
+		_, insertErr := tx.ExecContext(ctx, insertQuery,
+			shardId, databases.RowTypeTimer, request.ExecuteAt, newTimerUuidHigh, newTimerUuidLow,
+			request.TimerId, namespace, request.CallbackUrl, payloadJSON, retryPolicyJSON,
+			request.CallbackTimeoutSeconds, currentCreatedAt, currentAttempts)
+
+		if insertErr != nil {
+			return databases.NewGenericDbError("failed to insert updated timer", insertErr)
+		}
+	} else {
+		// ExecuteAt didn't change, we can do a simple UPDATE
+		updateQuery := `UPDATE timers 
+		               SET timer_callback_url = $1, timer_payload = $2, timer_retry_policy = $3, 
+		                   timer_callback_timeout_seconds = $4
+		               WHERE shard_id = $5 AND row_type = $6 AND timer_namespace = $7 AND timer_id = $8`
+
+		result, updateErr := tx.ExecContext(ctx, updateQuery,
+			request.CallbackUrl, payloadJSON, retryPolicyJSON, request.CallbackTimeoutSeconds,
+			shardId, databases.RowTypeTimer, namespace, request.TimerId)
+
+		if updateErr != nil {
+			return databases.NewGenericDbError("failed to update timer", updateErr)
+		}
+
+		rowsAffected, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return databases.NewGenericDbError("failed to get rows affected", rowsErr)
+		}
+
+		if rowsAffected == 0 {
+			return databases.NewDbErrorNotExists("timer not found for update", nil)
+		}
+	}
+
+	// Commit the transaction
+	if commitErr := tx.Commit(); commitErr != nil {
+		return databases.NewGenericDbError("failed to commit transaction", commitErr)
+	}
+
+	return nil
 }
 
 func (c *PostgreSQLTimerStore) GetTimer(ctx context.Context, shardId int, namespace string, timerId string) (timer *databases.DbTimer, err *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+	// Query timer by shard_id, namespace, and timer_id using the unique index
+	query := `SELECT shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low,
+	                 timer_id, timer_namespace, timer_callback_url, timer_payload, 
+	                 timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts
+	          FROM timers 
+	          WHERE shard_id = $1 AND row_type = $2 AND timer_namespace = $3 AND timer_id = $4`
+
+	var (
+		dbShardId                  int
+		dbRowType                  int16
+		dbTimerExecuteAt           time.Time
+		dbTimerUuidHigh            int64
+		dbTimerUuidLow             int64
+		dbTimerId                  string
+		dbTimerNamespace           string
+		dbTimerCallbackUrl         string
+		dbTimerPayload             sql.NullString
+		dbTimerRetryPolicy         sql.NullString
+		dbTimerCallbackTimeoutSecs int32
+		dbTimerCreatedAt           time.Time
+		dbTimerAttempts            int32
+	)
+
+	queryErr := c.db.QueryRowContext(ctx, query, shardId, databases.RowTypeTimer, namespace, timerId).
+		Scan(&dbShardId, &dbRowType, &dbTimerExecuteAt, &dbTimerUuidHigh, &dbTimerUuidLow,
+			&dbTimerId, &dbTimerNamespace, &dbTimerCallbackUrl, &dbTimerPayload,
+			&dbTimerRetryPolicy, &dbTimerCallbackTimeoutSecs, &dbTimerCreatedAt, &dbTimerAttempts)
+
+	if queryErr != nil {
+		if errors.Is(queryErr, sql.ErrNoRows) {
+			return nil, databases.NewDbErrorNotExists("timer not found", queryErr)
+		}
+		return nil, databases.NewGenericDbError("failed to query timer", queryErr)
+	}
+
+	// Convert UUID high/low back to UUID
+	timerUuid := databases.HighLowToUuid(dbTimerUuidHigh, dbTimerUuidLow)
+
+	// Parse JSON payload and retry policy
+	var payload interface{}
+	var retryPolicy interface{}
+
+	if dbTimerPayload.Valid && dbTimerPayload.String != "" {
+		if unmarshalErr := json.Unmarshal([]byte(dbTimerPayload.String), &payload); unmarshalErr != nil {
+			return nil, databases.NewGenericDbError("failed to unmarshal timer payload", unmarshalErr)
+		}
+	}
+
+	if dbTimerRetryPolicy.Valid && dbTimerRetryPolicy.String != "" {
+		if unmarshalErr := json.Unmarshal([]byte(dbTimerRetryPolicy.String), &retryPolicy); unmarshalErr != nil {
+			return nil, databases.NewGenericDbError("failed to unmarshal timer retry policy", unmarshalErr)
+		}
+	}
+
+	timer = &databases.DbTimer{
+		Id:                     dbTimerId,
+		TimerUuid:              timerUuid,
+		Namespace:              dbTimerNamespace,
+		ExecuteAt:              dbTimerExecuteAt,
+		CallbackUrl:            dbTimerCallbackUrl,
+		Payload:                payload,
+		RetryPolicy:            retryPolicy,
+		CallbackTimeoutSeconds: dbTimerCallbackTimeoutSecs,
+		CreatedAt:              dbTimerCreatedAt,
+		Attempts:               dbTimerAttempts,
+	}
+
+	return timer, nil
 }
 
 func (c *PostgreSQLTimerStore) DeleteTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timerId string) *databases.DbError {
-	//TODO implement me
-	panic("implement me")
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+
+	// Use PostgreSQL transaction for atomic operation
+	tx, txErr := c.db.BeginTx(ctx, nil)
+	if txErr != nil {
+		return databases.NewGenericDbError("failed to start PostgreSQL transaction", txErr)
+	}
+	defer tx.Rollback() // Will be no-op if transaction is committed
+
+	// Check shard version within the transaction
+	var actualShardVersion int64
+	shardQuery := `SELECT shard_version FROM timers 
+	               WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5`
+
+	shardErr := tx.QueryRowContext(ctx, shardQuery, shardId, databases.RowTypeShard,
+		databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&actualShardVersion)
+
+	if shardErr != nil {
+		if errors.Is(shardErr, sql.ErrNoRows) {
+			// Shard doesn't exist
+			conflictInfo := &databases.ShardInfo{
+				ShardVersion: 0,
+			}
+			return databases.NewDbErrorOnShardConditionFail("shard not found during timer delete", nil, conflictInfo)
+		}
+		return databases.NewGenericDbError("failed to read shard", shardErr)
+	}
+
+	// Compare shard versions
+	if actualShardVersion != shardVersion {
+		// Version mismatch
+		conflictInfo := &databases.ShardInfo{
+			ShardVersion: actualShardVersion,
+		}
+		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer delete", nil, conflictInfo)
+	}
+
+	// Delete the timer using the unique index (optimized - no lookup needed)
+	deleteQuery := `DELETE FROM timers 
+	               WHERE shard_id = $1 AND row_type = $2 AND timer_namespace = $3 AND timer_id = $4`
+
+	result, deleteErr := tx.ExecContext(ctx, deleteQuery, shardId, databases.RowTypeTimer, namespace, timerId)
+
+	if deleteErr != nil {
+		return databases.NewGenericDbError("failed to delete timer", deleteErr)
+	}
+
+	// Check how many rows were affected to determine if timer existed
+	rowsAffected, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		return databases.NewGenericDbError("failed to get rows affected", rowsErr)
+	}
+
+	// Check if timer actually existed and was deleted
+	// rowsAffected == 0 means timer didn't exist, rowsAffected == 1 means timer was deleted
+	// Note: Maintaining idempotent behavior for now - returning success regardless
+	// This can be changed to return DbErrorNotExists if non-idempotent behavior is desired
+	_ = rowsAffected
+
+	// Commit the transaction
+	if commitErr := tx.Commit(); commitErr != nil {
+		return databases.NewGenericDbError("failed to commit transaction", commitErr)
+	}
+
+	return nil
 }

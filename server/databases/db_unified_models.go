@@ -31,6 +31,7 @@ type (
 		ShardConditionFail   bool
 		ConflictShardVersion int64
 		NotExists            bool
+		NotSupport           bool
 	}
 
 	// DbTimer is the timer model stored in DB
@@ -145,6 +146,14 @@ func NewDbErrorNotExists(msg string, err error) *DbError {
 		OriginalError: err,
 		CustomMessage: msg,
 		NotExists:     true,
+	}
+}
+
+func NewDbErrorNotSupport(msg string, err error) *DbError {
+	return &DbError{
+		OriginalError: err,
+		CustomMessage: msg,
+		NotSupport:    true,
 	}
 }
 
