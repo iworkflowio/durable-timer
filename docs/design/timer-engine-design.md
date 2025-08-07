@@ -21,6 +21,10 @@ This document outlines the design for a timer engine that manages timer executio
 4. **Batch Operations**: Optimize database operations for high throughput
 5. **Fault Tolerance**: Ensure no timer loss during failures
 
+## ⚠️ **Important Note: Pseudo-Code Implementation**
+
+**The Go code blocks in this document are simplified pseudo-code examples designed to illustrate the core concepts and logic flow.** The actual production implementation will be significantly more complex.
+
 ---
 
 ## Approach 1: Load Only Fired Timers + Look-Ahead
@@ -67,6 +71,9 @@ LIMIT 100;
 ```
 
 #### Processing Logic
+
+**Engine Structure**: The Approach1Engine maintains minimal state for the "load only fired timers" strategy. It tracks the load interval (how often to check for timers), a small look-ahead window (1 second), channels for processing and deletion, and manages dynamic wake-up scheduling based on the next timer to fire.
+
 ```go
 type Approach1Engine struct {
     loadInterval     time.Duration  // Default: 5s, Dynamic: 1s-30s
@@ -76,6 +83,8 @@ type Approach1Engine struct {
     nextWakeUp       time.Time
     loadTimer        *time.Timer    // Current scheduled load timer
 }
+
+// **Timer Loading Logic**: This function implements the core "load only fired timers" strategy with adaptive wake-up scheduling. It queries the database for timers within a 1-second look-ahead window, immediately queues any fired timers for processing, and dynamically schedules the next load based on the earliest future timer found (or falls back to the default interval if no future timers exist).
 
 func (e *Approach1Engine) LoadTimers() {
     now := time.Now()
@@ -99,6 +108,8 @@ func (e *Approach1Engine) LoadTimers() {
     
     e.scheduleNextLoad(nextWakeUp)
 }
+
+// **Dynamic Timer Addition**: This function handles new timer creation with intelligent wake-up management. It first persists the timer to the database for durability, then optimizes the engine's scheduling by immediately processing already-fired timers or updating the wake-up time if the new timer should fire before the currently scheduled load. This ensures responsive timer execution without unnecessary database polling.
 
 func (e *Approach1Engine) AddTimer(timer Timer) error {
     // Write timer to database first
@@ -233,6 +244,9 @@ graph TD
 ### Detailed Workflow
 
 #### Comprehensive Loading Strategy
+
+**Engine Structure**: The Approach2Engine implements the "preload future timers + range deletion" strategy with comprehensive memory management. It maintains a large in-memory priority queue for upcoming timers (2-minute window), tracks loaded time ranges to enable safe range deletion, and includes memory pressure controls to prevent runaway memory usage during high timer creation rates.
+
 ```go
 type Approach2Engine struct {
     preloadWindow      time.Duration     // 2 minutes
@@ -242,6 +256,8 @@ type Approach2Engine struct {
     loadedRanges       []TimeRange
     maxMemoryTimers    int               // 100,000
 }
+
+// **Bulk Timer Preloading**: This function implements the core preloading strategy by fetching a large batch of future timers (2-minute window) from the database and loading them into the in-memory priority queue. It tracks the loaded time range to enable safe range deletion later, ensuring the engine maintains a comprehensive view of all timers in its time window for efficient range-based cleanup operations.
 
 func (e *Approach2Engine) PreloadTimers() {
     now := time.Now()
@@ -256,6 +272,8 @@ func (e *Approach2Engine) PreloadTimers() {
     e.loadedRanges = append(e.loadedRanges, TimeRange{now, endTime})
     e.scheduleNextPreload()
 }
+
+// **Comprehensive Timer Addition**: This function implements the critical "comprehensive view" strategy for safe range deletion. It persists new timers to the database first, then uses conservative logic to add timers to memory: for unknown database errors (timeouts, network issues), it adds the timer to memory anyway to prevent timer loss, while only skipping memory addition for explicit validation errors. This ensures the in-memory queue maintains a complete view of all timers in its time window.
 
 func (e *Approach2Engine) AddNewTimer(timer Timer) error {
     // Critical: Always maintain comprehensive view
@@ -279,6 +297,8 @@ func (e *Approach2Engine) AddNewTimer(timer Timer) error {
     
     return err
 }
+
+// **Timer Processing and Batch Cleanup**: This function implements the main processing loop that executes timers with efficient batch cleanup. It continuously monitors the priority queue for fired timers, executes their callbacks, and accumulates successfully completed timers for batch range deletion. The batching strategy minimizes database operations while the range deletion capability (enabled by the comprehensive view) provides dramatic efficiency gains over individual timer deletion.
 
 func (e *Approach2Engine) ProcessAndCleanup() {
     completedBatch := []Timer{}
@@ -304,6 +324,8 @@ func (e *Approach2Engine) ProcessAndCleanup() {
     }
 }
 
+// **Efficient Range Deletion**: This function performs the key efficiency optimization of Approach 2 by deleting multiple completed timers in a single database operation. It calculates the time range from the first to last completed timer and issues a range-based DELETE statement, which can remove thousands of timers in one operation instead of thousands of individual DELETE statements. This is only safe because the engine maintains a comprehensive view of all timers in the time range.
+
 func (e *Approach2Engine) performRangeDelete(timers []Timer) {
     if len(timers) == 0 {
         return
@@ -326,6 +348,9 @@ func (e *Approach2Engine) performRangeDelete(timers []Timer) {
 ### Range Deletion Safety
 
 **Comprehensive View Guarantee**:
+
+**Safety Check for Range Deletion**: This function ensures that range deletion operations are only performed when the engine has a complete view of all timers in the target time range. It validates that the deletion range falls entirely within a previously loaded time range, preventing accidental deletion of timers that weren't loaded into memory. This safety check is critical for the correctness of the range deletion optimization.
+
 ```go
 func (e *Approach2Engine) canSafelyRangeDelete(startTime, endTime time.Time) bool {
     // Only delete if we have comprehensive view of the time range
@@ -373,6 +398,9 @@ Range Deletion Example:
 ### Fault Tolerance and Recovery
 
 **Crash Recovery**:
+
+**Simple Recovery Strategy**: This function handles engine restart scenarios by simply reloading timers from the database. Since all timer state is durably persisted in the database, recovery is straightforward - any timers that were in memory before the crash are automatically reloaded from the database, and processing continues normally. This approach prioritizes simplicity and reliability over optimization of recovery time.
+
 ```go
 func (e *Approach2Engine) recover() error {
     // On startup, immediately preload and continue
@@ -382,6 +410,9 @@ func (e *Approach2Engine) recover() error {
 ```
 
 **Split-brain Protection**:
+
+**Shard Ownership Validation**: This function prevents split-brain scenarios in distributed deployments by continuously validating that the current instance still owns its assigned shard. It uses the database's optimistic concurrency control mechanism to check shard ownership and immediately stops timer processing if ownership has been lost to another instance. This ensures that only one instance processes timers for each shard at any given time, preventing duplicate timer execution.
+
 ```go
 func (e *Approach2Engine) validateShardOwnership() bool {
     ownership, err := e.db.ClaimShardOwnership(e.shardID, e.instanceID, nil)
