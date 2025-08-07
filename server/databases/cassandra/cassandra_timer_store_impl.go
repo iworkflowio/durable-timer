@@ -176,7 +176,7 @@ func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shar
 		retryPolicyJSON,
 		timer.CallbackTimeoutSeconds,
 		timer.CreatedAt,
-		0, // timer_attempts starts at 0
+		timer.Attempts, // Use the attempts value from the timer
 	)
 
 	// Execute the batch atomically
@@ -247,7 +247,7 @@ func (c *CassandraTimerStore) CreateTimerNoLock(ctx context.Context, shardId int
 		retryPolicyJSON,
 		timer.CallbackTimeoutSeconds,
 		timer.CreatedAt,
-		0, // timer_attempts starts at 0
+		timer.Attempts, // Use the attempts value from the timer
 	).WithContext(ctx).Exec()
 
 	if insertErr != nil {
@@ -323,6 +323,7 @@ func (c *CassandraTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardI
 			RetryPolicy:            retryPolicy,
 			CallbackTimeoutSeconds: dbTimerCallbackTimeoutSecs,
 			CreatedAt:              dbTimerCreatedAt,
+			Attempts:               dbTimerAttempts,
 		}
 
 		timers = append(timers, timer)
@@ -399,7 +400,7 @@ func (c *CassandraTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx conte
 			retryPolicyJSON,
 			timer.CallbackTimeoutSeconds,
 			timer.CreatedAt,
-			0, // timer_attempts starts at 0 TODO: we should use the attempts from the timer to insert
+			timer.Attempts, // Use the actual attempts from the timer
 		)
 	}
 
@@ -593,7 +594,7 @@ func (c *CassandraTimerStore) GetTimer(ctx context.Context, shardId int, namespa
 	// Query to get the timer by namespace and timer ID
 	query := `SELECT shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low,
 	                 timer_id, timer_namespace, timer_callback_url, timer_payload, 
-	                 timer_retry_policy, timer_callback_timeout_seconds, timer_created_at
+	                 timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts
 	          FROM timers 
 	          WHERE shard_id = ? AND row_type = ? AND timer_namespace = ? AND timer_id = ?
 	          ALLOW FILTERING`
@@ -611,13 +612,14 @@ func (c *CassandraTimerStore) GetTimer(ctx context.Context, shardId int, namespa
 		dbTimerRetryPolicy         string
 		dbTimerCallbackTimeoutSecs int32
 		dbTimerCreatedAt           time.Time
+		dbTimerAttempts            int32
 	)
 
 	err2 := c.session.Query(query, shardId, databases.RowTypeTimer, namespace, timerId).
 		WithContext(ctx).
 		Scan(&dbShardId, &dbRowType, &dbTimerExecuteAt, &dbTimerUuidHigh, &dbTimerUuidLow,
 			&dbTimerId, &dbTimerNamespace, &dbTimerCallbackUrl, &dbTimerPayload,
-			&dbTimerRetryPolicy, &dbTimerCallbackTimeoutSecs, &dbTimerCreatedAt)
+			&dbTimerRetryPolicy, &dbTimerCallbackTimeoutSecs, &dbTimerCreatedAt, &dbTimerAttempts)
 
 	if err2 != nil {
 		if err2 == gocql.ErrNotFound {
@@ -655,6 +657,7 @@ func (c *CassandraTimerStore) GetTimer(ctx context.Context, shardId int, namespa
 		RetryPolicy:            retryPolicy,
 		CallbackTimeoutSeconds: dbTimerCallbackTimeoutSecs,
 		CreatedAt:              dbTimerCreatedAt,
+		Attempts:               dbTimerAttempts,
 	}
 
 	return timer, nil

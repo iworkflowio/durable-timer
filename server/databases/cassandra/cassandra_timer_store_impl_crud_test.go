@@ -61,6 +61,9 @@ func TestGetTimer_Success(t *testing.T) {
 	expectedRetryPolicy := map[string]interface{}{"maxAttempts": float64(3), "backoff": "exponential"}
 	assert.Equal(t, expectedPayload, retrievedTimer.Payload)
 	assert.Equal(t, expectedRetryPolicy, retrievedTimer.RetryPolicy)
+
+	// Verify Attempts field defaults to 0
+	assert.Equal(t, int32(0), retrievedTimer.Attempts)
 }
 
 func TestGetTimer_NotFound(t *testing.T) {
@@ -574,4 +577,78 @@ func TestUpdateTimer_NonNilToNilFields(t *testing.T) {
 	assert.Nil(t, retrievedTimer.RetryPolicy)
 	assert.Equal(t, updateRequest.CallbackUrl, retrievedTimer.CallbackUrl)
 	assert.Equal(t, updateRequest.CallbackTimeoutSeconds, retrievedTimer.CallbackTimeoutSeconds)
+}
+
+func TestCreateTimerAttemptsPreservation(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 1
+	namespace := "test_namespace"
+
+	// Create shard record
+	ownerAddr := "owner-1"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	require.Nil(t, err)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Test CreateTimer with zero Attempts
+	timer1 := &databases.DbTimer{
+		Id:                     "timer-zero-attempts",
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "timer-zero-attempts"),
+		Namespace:              namespace,
+		ExecuteAt:              now.Add(1 * time.Minute),
+		CallbackUrl:            "https://example.com/callback",
+		CallbackTimeoutSeconds: 30,
+		CreatedAt:              now,
+		Attempts:               0,
+	}
+
+	// Test CreateTimer with non-zero Attempts
+	timer2 := &databases.DbTimer{
+		Id:                     "timer-nonzero-attempts",
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "timer-nonzero-attempts"),
+		Namespace:              namespace,
+		ExecuteAt:              now.Add(2 * time.Minute),
+		CallbackUrl:            "https://example.com/callback",
+		CallbackTimeoutSeconds: 30,
+		CreatedAt:              now,
+		Attempts:               7, // Non-zero value
+	}
+
+	// Create both timers
+	createErr1 := store.CreateTimer(ctx, shardId, shardVersion, namespace, timer1)
+	require.Nil(t, createErr1)
+	createErr2 := store.CreateTimer(ctx, shardId, shardVersion, namespace, timer2)
+	require.Nil(t, createErr2)
+
+	// Verify Attempts are preserved
+	retrievedTimer1, getErr1 := store.GetTimer(ctx, shardId, namespace, timer1.Id)
+	require.Nil(t, getErr1)
+	assert.Equal(t, int32(0), retrievedTimer1.Attempts)
+
+	retrievedTimer2, getErr2 := store.GetTimer(ctx, shardId, namespace, timer2.Id)
+	require.Nil(t, getErr2)
+	assert.Equal(t, int32(7), retrievedTimer2.Attempts)
+
+	// Test CreateTimerNoLock as well
+	timer3 := &databases.DbTimer{
+		Id:                     "timer-nolock-attempts",
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "timer-nolock-attempts"),
+		Namespace:              namespace,
+		ExecuteAt:              now.Add(3 * time.Minute),
+		CallbackUrl:            "https://example.com/callback",
+		CallbackTimeoutSeconds: 30,
+		CreatedAt:              now,
+		Attempts:               12, // Non-zero value
+	}
+
+	createErr3 := store.CreateTimerNoLock(ctx, shardId, namespace, timer3)
+	require.Nil(t, createErr3)
+
+	retrievedTimer3, getErr3 := store.GetTimer(ctx, shardId, namespace, timer3.Id)
+	require.Nil(t, getErr3)
+	assert.Equal(t, int32(12), retrievedTimer3.Attempts)
 }

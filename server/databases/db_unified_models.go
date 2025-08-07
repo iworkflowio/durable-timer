@@ -67,6 +67,9 @@ type (
 
 		// When the timer was executed (if applicable)
 		ExecutedAt time.Time
+
+		// Number of attempts that have been made to execute the timer
+		Attempts int32
 	}
 
 	RangeGetTimersRequest struct {

@@ -197,6 +197,9 @@ func TestGetTimersUpToTimestamp_WithPayloadAndRetryPolicy(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, float64(3), retryMap["maxAttempts"])
 	assert.Equal(t, 2.0, retryMap["backoffMultiplier"])
+
+	// Verify Attempts field defaults to 0
+	assert.Equal(t, int32(0), retrievedTimer.Attempts)
 }
 
 func TestGetTimersUpToTimestamp_EmptyResult(t *testing.T) {
