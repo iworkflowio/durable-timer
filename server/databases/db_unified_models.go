@@ -136,3 +136,15 @@ func NewDbErrorOnShardConditionFail(msg string, err error, shardInfo *ShardInfo)
 		ConflictShardVersion: shardInfo.ShardVersion,
 	}
 }
+
+func NewDbErrorNotExists(msg string, err error) *DbError {
+	return &DbError{
+		OriginalError: err,
+		CustomMessage: msg,
+		NotExists:     true,
+	}
+}
+
+func IsDbErrorNotExists(err *DbError) bool {
+	return err != nil && err.NotExists
+}

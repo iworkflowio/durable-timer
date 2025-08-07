@@ -15,6 +15,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 const (
 	testKeyspace = "timer_test"
 	testHost     = "localhost:9042"
@@ -57,14 +65,28 @@ func executeSchemaFile(session *gocql.Session) error {
 			continue
 		}
 
-		// Skip comment-only lines
-		if strings.HasPrefix(stmt, "--") {
+		// Remove SQL comments from the statement for cleaner execution
+		lines := strings.Split(stmt, "\n")
+		var cleanLines []string
+		for _, line := range lines {
+			// Remove inline comments
+			if idx := strings.Index(line, "--"); idx != -1 {
+				line = line[:idx]
+			}
+			line = strings.TrimSpace(line)
+			if line != "" {
+				cleanLines = append(cleanLines, line)
+			}
+		}
+		cleanStmt := strings.Join(cleanLines, " ")
+
+		if cleanStmt == "" {
 			continue
 		}
 
-		err = session.Query(stmt).Exec()
+		err = session.Query(cleanStmt).Exec()
 		if err != nil {
-			return fmt.Errorf("failed to execute CQL statement '%s': %w", stmt, err)
+			return fmt.Errorf("failed to execute CQL statement '%s': %w", cleanStmt, err)
 		}
 	}
 
@@ -145,6 +167,30 @@ func createTestKeyspace() error {
 	err = executeSchemaFile(testSession)
 	if err != nil {
 		return fmt.Errorf("failed to execute schema file: %w", err)
+	}
+
+	// Verify that required indexes were created
+	err = verifyIndexes(testSession)
+	if err != nil {
+		return fmt.Errorf("failed to verify indexes: %w", err)
+	}
+
+	return nil
+}
+
+// verifyIndexes checks that all required indexes exist in the test keyspace
+func verifyIndexes(session *gocql.Session) error {
+	// Query to check if idx_timer_id index exists
+	indexQuery := `SELECT index_name FROM system_schema.indexes 
+	               WHERE keyspace_name = ? AND table_name = ? AND index_name = ?`
+
+	var indexName string
+	err := session.Query(indexQuery, testKeyspace, "timers", "idx_timer_id").Scan(&indexName)
+	if err != nil {
+		if err == gocql.ErrNotFound {
+			return fmt.Errorf("required index 'idx_timer_id' not found - schema creation may have failed")
+		}
+		return fmt.Errorf("failed to query for index: %w", err)
 	}
 
 	return nil

@@ -399,7 +399,7 @@ func (c *CassandraTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx conte
 			retryPolicyJSON,
 			timer.CallbackTimeoutSeconds,
 			timer.CreatedAt,
-			0, // timer_attempts starts at 0
+			0, // timer_attempts starts at 0 TODO: we should use the attempts from the timer to insert
 		)
 	}
 
@@ -434,18 +434,323 @@ func (c *CassandraTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx conte
 	}, nil
 }
 
-
 func (c *CassandraTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+
+	// Serialize new payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON string
+
+	if request.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(request.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadJSON = string(payloadBytes)
+	}
+
+	if request.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(request.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyJSON = string(retryPolicyBytes)
+	}
+
+	// For Cassandra, we need to first lookup the timer's primary key components outside the LWT batch
+	// Use the secondary index on timer_id and filter results in application code
+	// This lookup combines partition key (shard_id) with secondary index (timer_id)
+	// Most efficient query pattern - partition key + secondary index
+	lookupQuery := `SELECT shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, timer_created_at, timer_namespace FROM timers 
+	                WHERE shard_id = ? AND timer_id = ?`
+
+	// Perform lookup outside the LWT batch due to Cassandra limitations with secondary indexes in LWT
+	iter := c.session.Query(lookupQuery, shardId, request.TimerId).
+		WithContext(ctx).
+		Iter()
+
+	var found bool
+
+	// Scan through results and find the one matching our shard, row type, and namespace
+	var resultShardId int
+	var resultRowType int16
+	var resultExecuteAt, resultCreatedAt time.Time
+	var resultUuidHigh, resultUuidLow int64
+	var resultNamespace string
+
+	for iter.Scan(&resultShardId, &resultRowType, &resultExecuteAt, &resultUuidHigh, &resultUuidLow, &resultCreatedAt, &resultNamespace) {
+		if resultShardId == shardId && resultRowType == databases.RowTypeTimer && resultNamespace == namespace {
+			found = true
+			break
+		}
+	}
+
+	if err2 := iter.Close(); err2 != nil {
+		return databases.NewGenericDbError("failed to close lookup iterator", err2)
+	}
+
+	if !found {
+		return databases.NewDbErrorNotExists("timer not found for update", nil)
+	}
+
+	// Create a batch with LWT for atomic operation
+	batch := c.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
+
+	// Add shard version check to batch - update shard version to same value to verify it matches
+	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
+	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
+
+	if request.ExecuteAt.Equal(resultExecuteAt) {
+		// Same execution time - can do direct UPDATE using existing primary key
+		// Add IF EXISTS to detect if timer was deleted between lookup and LWT
+		updateQuery := `UPDATE timers SET timer_callback_url = ?, timer_payload = ?, timer_retry_policy = ?, timer_callback_timeout_seconds = ?, timer_attempts = ? 
+		                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF EXISTS`
+		batch.Query(updateQuery,
+			request.CallbackUrl,
+			payloadJSON,
+			retryPolicyJSON,
+			request.CallbackTimeoutSeconds,
+			0, // Reset attempts on update
+			shardId,
+			databases.RowTypeTimer,
+			resultExecuteAt,
+			resultUuidHigh,
+			resultUuidLow,
+		)
+	} else {
+		// Different execution time - need delete+insert because timer_execute_at is part of primary key
+		// Add IF EXISTS to detect if timer was deleted between lookup and LWT
+		deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF EXISTS`
+		batch.Query(deleteQuery, shardId, databases.RowTypeTimer, resultExecuteAt, resultUuidHigh, resultUuidLow)
+
+		// timerUUID is the same as the current timerUUID because the timerID is the same
+
+		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		batch.Query(insertQuery,
+			shardId,
+			databases.RowTypeTimer,
+			request.ExecuteAt,
+			resultUuidHigh,
+			resultUuidLow,
+			request.TimerId,
+			namespace,
+			request.CallbackUrl,
+			payloadJSON,
+			retryPolicyJSON,
+			request.CallbackTimeoutSeconds,
+			resultCreatedAt, // Keep original creation time
+			0,               // Reset attempts on update
+		)
+	}
+
+	// Execute the batch atomically
+	previous := make(map[string]interface{})
+	applied, iter, batchErr := c.session.MapExecuteBatchCAS(batch, previous)
+	if iter != nil {
+		iter.Close()
+	}
+
+	if batchErr != nil {
+		return databases.NewGenericDbError("failed to execute atomic update batch", batchErr)
+	}
+
+	if !applied {
+		// Batch failed - check the specific reason by examining the previous map
+		// The batch contains: 1) shard version check, 2) timer update/delete with IF EXISTS
+
+		// First check if timer still exists (race condition detection)
+		if existsValue, hasExists := previous["[applied]"]; hasExists {
+			// The [applied] field indicates whether the IF EXISTS condition passed
+			if applied, ok := existsValue.(bool); ok && !applied {
+				// Timer was deleted between lookup and LWT execution (race condition)
+				return databases.NewDbErrorNotExists("timer was deleted during update operation", nil)
+			}
+		}
+
+		// Check shard version mismatch
+		if shardVersionValue, exists := previous["shard_version"]; exists {
+			if shardVersionValue != nil {
+				// Shard exists but version mismatch
+				conflictShardVersion := shardVersionValue.(int64)
+				conflictInfo := &databases.ShardInfo{
+					ShardVersion: conflictShardVersion,
+				}
+				return databases.NewDbErrorOnShardConditionFail("shard version mismatch during update operation", nil, conflictInfo)
+			} else {
+				// Shard version field exists but is null - unexpected case
+				return databases.NewGenericDbError("unexpected shard version state during update", nil)
+			}
+		} else {
+			// Shard record doesn't exist - the shard version check failed because no shard record found
+			return databases.NewGenericDbError("shard record does not exist", nil)
+		}
+	}
+
+	return nil
 }
 
 func (c *CassandraTimerStore) GetTimer(ctx context.Context, shardId int, namespace string, timerId string) (timer *databases.DbTimer, err *databases.DbError) {
-	//TODO implement me
-	panic("implement me")
+	// Query to get the timer by namespace and timer ID
+	query := `SELECT shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low,
+	                 timer_id, timer_namespace, timer_callback_url, timer_payload, 
+	                 timer_retry_policy, timer_callback_timeout_seconds, timer_created_at
+	          FROM timers 
+	          WHERE shard_id = ? AND row_type = ? AND timer_namespace = ? AND timer_id = ?
+	          ALLOW FILTERING`
+
+	var (
+		dbShardId                  int
+		dbRowType                  int16
+		dbTimerExecuteAt           time.Time
+		dbTimerUuidHigh            int64
+		dbTimerUuidLow             int64
+		dbTimerId                  string
+		dbTimerNamespace           string
+		dbTimerCallbackUrl         string
+		dbTimerPayload             string
+		dbTimerRetryPolicy         string
+		dbTimerCallbackTimeoutSecs int32
+		dbTimerCreatedAt           time.Time
+	)
+
+	err2 := c.session.Query(query, shardId, databases.RowTypeTimer, namespace, timerId).
+		WithContext(ctx).
+		Scan(&dbShardId, &dbRowType, &dbTimerExecuteAt, &dbTimerUuidHigh, &dbTimerUuidLow,
+			&dbTimerId, &dbTimerNamespace, &dbTimerCallbackUrl, &dbTimerPayload,
+			&dbTimerRetryPolicy, &dbTimerCallbackTimeoutSecs, &dbTimerCreatedAt)
+
+	if err2 != nil {
+		if err2 == gocql.ErrNotFound {
+			return nil, databases.NewDbErrorNotExists("timer not found", err2)
+		}
+		return nil, databases.NewGenericDbError("failed to query timer", err2)
+	}
+
+	// Convert UUID high/low back to UUID
+	timerUuid := databases.HighLowToUuid(dbTimerUuidHigh, dbTimerUuidLow)
+
+	// Parse JSON payload and retry policy
+	var payload interface{}
+	var retryPolicy interface{}
+
+	if dbTimerPayload != "" {
+		if unmarshalErr := json.Unmarshal([]byte(dbTimerPayload), &payload); unmarshalErr != nil {
+			return nil, databases.NewGenericDbError("failed to unmarshal timer payload", unmarshalErr)
+		}
+	}
+
+	if dbTimerRetryPolicy != "" {
+		if unmarshalErr := json.Unmarshal([]byte(dbTimerRetryPolicy), &retryPolicy); unmarshalErr != nil {
+			return nil, databases.NewGenericDbError("failed to unmarshal timer retry policy", unmarshalErr)
+		}
+	}
+
+	timer = &databases.DbTimer{
+		Id:                     dbTimerId,
+		TimerUuid:              timerUuid,
+		Namespace:              dbTimerNamespace,
+		ExecuteAt:              dbTimerExecuteAt,
+		CallbackUrl:            dbTimerCallbackUrl,
+		Payload:                payload,
+		RetryPolicy:            retryPolicy,
+		CallbackTimeoutSeconds: dbTimerCallbackTimeoutSecs,
+		CreatedAt:              dbTimerCreatedAt,
+	}
+
+	return timer, nil
 }
 
 func (c *CassandraTimerStore) DeleteTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timerId string) *databases.DbError {
-	//TODO implement me
-	panic("implement me")
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+
+	// First, find the timer's primary key components (execute_at, uuid_high, uuid_low)
+	// This lookup is done outside the LWT batch due to Cassandra limitations with secondary indexes in LWT
+	lookupQuery := `SELECT shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, timer_namespace FROM timers 
+	                WHERE shard_id = ? AND timer_id = ?`
+
+	iter := c.session.Query(lookupQuery, shardId, timerId).
+		WithContext(ctx).
+		Iter()
+
+	// Scan through results and find the one matching our shard, row type, and namespace
+	var resultShardId int
+	var resultRowType int16
+	var resultExecuteAt time.Time
+	var resultUuidHigh, resultUuidLow int64
+	var resultNamespace string
+	var found bool
+
+	for iter.Scan(&resultShardId, &resultRowType, &resultExecuteAt, &resultUuidHigh, &resultUuidLow, &resultNamespace) {
+		if resultShardId == shardId && resultRowType == databases.RowTypeTimer && resultNamespace == namespace {
+			found = true
+			break
+		}
+	}
+
+	if err := iter.Close(); err != nil {
+		return databases.NewGenericDbError("failed to close lookup iterator", err)
+	}
+
+	if !found {
+		// Timer doesn't exist, deletion is idempotent - return success
+		return nil
+	}
+
+	// Create a batch with LWT for atomic operation
+	batch := c.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
+
+	// Add shard version check to batch - update shard version to same value to verify it matches
+	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
+	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
+
+	// Add DELETE statement for the specific timer using primary key with IF EXISTS to detect race conditions
+	deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF EXISTS`
+	batch.Query(deleteQuery, shardId, databases.RowTypeTimer, resultExecuteAt, resultUuidHigh, resultUuidLow)
+
+	// Execute the batch atomically
+	previous := make(map[string]interface{})
+	applied, iter, batchErr := c.session.MapExecuteBatchCAS(batch, previous)
+	if iter != nil {
+		iter.Close()
+	}
+
+	if batchErr != nil {
+		return databases.NewGenericDbError("failed to execute atomic delete batch", batchErr)
+	}
+
+	if !applied {
+		// Batch failed - check the specific reason by examining the previous map
+		// The batch contains: 1) shard version check, 2) timer delete with IF EXISTS
+
+		// First check if timer still exists (race condition detection)
+		if existsValue, hasExists := previous["[applied]"]; hasExists {
+			// The [applied] field indicates whether the IF EXISTS condition passed
+			if applied, ok := existsValue.(bool); ok && !applied {
+				// Timer was deleted between lookup and LWT execution (race condition)
+				// For delete operations, this is actually success (idempotent)
+				return nil
+			}
+		}
+
+		// Check shard version mismatch
+		if shardVersionValue, exists := previous["shard_version"]; exists {
+			if shardVersionValue != nil {
+				// Shard exists but version mismatch
+				conflictShardVersion := shardVersionValue.(int64)
+				conflictInfo := &databases.ShardInfo{
+					ShardVersion: conflictShardVersion,
+				}
+				return databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete operation", nil, conflictInfo)
+			} else {
+				// Shard version field exists but is null - unexpected case
+				return databases.NewGenericDbError("unexpected shard version state during delete", nil)
+			}
+		} else {
+			// Shard record doesn't exist - the shard version check failed because no shard record found
+			return databases.NewGenericDbError("shard record does not exist", nil)
+		}
+	}
+
+	return nil
 }

@@ -25,5 +25,6 @@ CREATE TABLE timers (
     PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low)
 ) WITH CLUSTERING ORDER BY (row_type ASC, timer_execute_at ASC, timer_uuid_high ASC, timer_uuid_low ASC);
 
--- Index for timer lookups by namespace and timer_id
-CREATE INDEX idx_timer_namespace_id ON timers (timer_namespace, timer_id);
+-- Index for timer lookups by timer_id (more selective than namespace)
+-- Cassandra only support one column for secondary index
+CREATE INDEX idx_timer_id ON timers (timer_id);
