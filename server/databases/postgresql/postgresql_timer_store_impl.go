@@ -793,9 +793,9 @@ func (c *PostgreSQLTimerStore) DeleteTimer(ctx context.Context, shardId int, sha
 
 	// Check if timer actually existed and was deleted
 	// rowsAffected == 0 means timer didn't exist, rowsAffected == 1 means timer was deleted
-	// Note: Maintaining idempotent behavior for now - returning success regardless
-	// This can be changed to return DbErrorNotExists if non-idempotent behavior is desired
-	_ = rowsAffected
+	if rowsAffected == 0 {
+		return databases.NewDbErrorNotExists("timer not found", nil)
+	}
 
 	// Commit the transaction
 	if commitErr := tx.Commit(); commitErr != nil {

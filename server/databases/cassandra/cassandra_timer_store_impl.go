@@ -696,8 +696,8 @@ func (c *CassandraTimerStore) DeleteTimer(ctx context.Context, shardId int, shar
 	}
 
 	if !found {
-		// Timer doesn't exist, deletion is idempotent - return success
-		return nil
+		// Timer doesn't exist - return NotExists error
+		return databases.NewDbErrorNotExists("timer not found", nil)
 	}
 
 	// Create a batch with LWT for atomic operation
@@ -726,31 +726,27 @@ func (c *CassandraTimerStore) DeleteTimer(ctx context.Context, shardId int, shar
 		// Batch failed - check the specific reason by examining the previous map
 		// The batch contains: 1) shard version check, 2) timer delete with IF EXISTS
 
-		// First check if timer still exists (race condition detection)
-		if existsValue, hasExists := previous["[applied]"]; hasExists {
-			// The [applied] field indicates whether the IF EXISTS condition passed
-			if applied, ok := existsValue.(bool); ok && !applied {
-				// Timer was deleted between lookup and LWT execution (race condition)
-				// For delete operations, this is actually success (idempotent)
-				return nil
-			}
-		}
-
-		// Check shard version mismatch
+		// Check if shard row exists in the response (indicates shard version check worked)
 		if shardVersionValue, exists := previous["shard_version"]; exists {
 			if shardVersionValue != nil {
-				// Shard exists but version mismatch
-				conflictShardVersion := shardVersionValue.(int64)
-				conflictInfo := &databases.ShardInfo{
-					ShardVersion: conflictShardVersion,
+				// Shard exists - check if version matches
+				actualShardVersion := shardVersionValue.(int64)
+				if actualShardVersion == shardVersion {
+					// Shard version matches - the only possible failure is timer doesn't exist
+					return databases.NewDbErrorNotExists("timer not found", nil)
+				} else {
+					// Shard version mismatch
+					conflictInfo := &databases.ShardInfo{
+						ShardVersion: actualShardVersion,
+					}
+					return databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete operation", nil, conflictInfo)
 				}
-				return databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete operation", nil, conflictInfo)
 			} else {
 				// Shard version field exists but is null - unexpected case
 				return databases.NewGenericDbError("unexpected shard version state during delete", nil)
 			}
 		} else {
-			// Shard record doesn't exist - the shard version check failed because no shard record found
+			// No shard version in response - shard doesn't exist
 			return databases.NewGenericDbError("shard record does not exist", nil)
 		}
 	}

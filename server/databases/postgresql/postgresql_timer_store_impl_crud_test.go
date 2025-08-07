@@ -371,9 +371,10 @@ func TestDeleteTimer_NonExistentTimer(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
-	// Try to delete a timer that doesn't exist (should be idempotent)
+	// Try to delete a timer that doesn't exist (should return NotExists error)
 	deleteErr := store.DeleteTimer(ctx, shardId, shardVersion, namespace, "non-existent-timer")
-	assert.Nil(t, deleteErr) // Should succeed (idempotent)
+	assert.NotNil(t, deleteErr)
+	assert.True(t, databases.IsDbErrorNotExists(deleteErr))
 }
 
 func TestGetTimersUpToTimestamp_WithAttempts(t *testing.T) {
