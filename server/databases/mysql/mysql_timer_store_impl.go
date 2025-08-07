@@ -525,11 +525,6 @@ func (c *MySQLTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx context.C
 	}, nil
 }
 
-func (c *MySQLTimerStore) BatchInsertTimers(ctx context.Context, shardId int, shardVersion int64, TimersToInsert []*databases.DbTimer) *databases.DbError {
-	//TODO implement me
-	panic("implement me")
-}
-
 func (c *MySQLTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
 	//TODO implement me
 	panic("implement me")

@@ -676,11 +676,6 @@ func (c *MongoDBTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx context
 	return result, nil
 }
 
-func (c *MongoDBTimerStore) BatchInsertTimers(ctx context.Context, shardId int, shardVersion int64, TimersToInsert []*databases.DbTimer) *databases.DbError {
-	//TODO implement me
-	panic("implement me")
-}
-
 func (c *MongoDBTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
 	//TODO implement me
 	panic("implement me")

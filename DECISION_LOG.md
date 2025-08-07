@@ -17,6 +17,18 @@ Each decision should include:
 
 ## Decisions
 
+### [Date: 2025-07-30] Timer Engine Processing Strategy - Preload + Range Deletion
+
+- **Context**: Need to design the timer engine processing strategy for efficiently reading, executing, and deleting timers within a single shard. The engine must handle millions of timers per shard with high throughput (1M+ executions/second) while minimizing database load. Three approaches were evaluated: (1) Load only fired timers with small batches and adaptive wake-up, (2) Preload future timers with individual deletion, and (3) Preload future timers with range deletion for maximum efficiency.
+
+- **Decision**: Implement Approach 2 - "Preload Future Timers + Range Deletion" strategy. The engine preloads a 2-minute window of future timers into an in-memory priority queue, executes them when they fire, and performs efficient range deletion of completed timers in batches. To enable safe range deletion, the engine maintains a "comprehensive view" by adding new timers to memory for any database error except explicit validation errors, ensuring the in-memory queue contains all timers in its time window.
+
+- **Rationale**: This approach provides 95% reduction in database load compared to the simple approach (30 reads/hour vs 3,600 reads/hour, 120 range deletes/hour vs 36,000 individual deletes/hour) while achieving excellent timer precision (±10ms vs ±1 second). The comprehensive view strategy enables safe range deletion by ensuring no timer is deleted from the database without being processed first. Memory usage (50-200MB per shard) is manageable with pressure controls, and the efficiency gains are essential for the target scale of "thousands of millions of timers."
+
+- **Alternatives**: Approach 1 (Load only fired timers) - simpler but too inefficient for target scale, individual timer deletion instead of range deletion - 300x more delete operations, database polling without preloading - much higher query frequency, separate timer execution and cleanup services - additional complexity without efficiency benefits
+
+- **Impact**: Dramatic database efficiency improvement enabling target scale, higher memory usage requiring monitoring and pressure management, complex implementation requiring comprehensive error handling and concurrency management, sub-second timer precision improving user experience. The actual production implementation will be 100x more complex than the pseudo-code examples, requiring extensive error handling, monitoring, testing, and operational tooling.
+
 ### [Date: 2025-07-29] DynamoDB FilterExpression and Limit Ordering Issue
 
 - **Context**: During implementation of `GetTimersUpToTimestamp` API for DynamoDB, discovered that DynamoDB applies the `Limit` parameter before the `FilterExpression`. When querying the `ExecuteAtWithUuidIndex` LSI with a limit of 3 and filtering for `row_type = 2` (timer records), DynamoDB would scan the first 3 records from the index (which might include 1 shard record with `row_type = 1`), then apply the filter, returning only 2 timer records instead of the expected 3. This behavior is specific to DynamoDB's query execution order and differs from SQL databases where filtering typically happens before limiting.

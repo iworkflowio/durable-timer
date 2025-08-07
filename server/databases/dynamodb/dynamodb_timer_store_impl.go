@@ -678,11 +678,6 @@ func (d *DynamoDBTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx contex
 	}, nil
 }
 
-func (c *DynamoDBTimerStore) BatchInsertTimers(ctx context.Context, shardId int, shardVersion int64, TimersToInsert []*databases.DbTimer) *databases.DbError {
-	//TODO implement me
-	panic("implement me")
-}
-
 func (c *DynamoDBTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
 	//TODO implement me
 	panic("implement me")

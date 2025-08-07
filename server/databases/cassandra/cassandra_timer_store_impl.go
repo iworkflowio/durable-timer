@@ -434,10 +434,6 @@ func (c *CassandraTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx conte
 	}, nil
 }
 
-func (c *CassandraTimerStore) BatchInsertTimers(ctx context.Context, shardId int, shardVersion int64, TimersToInsert []*databases.DbTimer) *databases.DbError {
-	//TODO implement me
-	panic("implement me")
-}
 
 func (c *CassandraTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
 	//TODO implement me

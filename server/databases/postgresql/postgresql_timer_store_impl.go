@@ -522,11 +522,6 @@ func (c *PostgreSQLTimerStore) DeleteTimersUpToTimestampWithBatchInsert(ctx cont
 	}, nil
 }
 
-func (c *PostgreSQLTimerStore) BatchInsertTimers(ctx context.Context, shardId int, shardVersion int64, TimersToInsert []*databases.DbTimer) *databases.DbError {
-	//TODO implement me
-	panic("implement me")
-}
-
 func (c *PostgreSQLTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
 	//TODO implement me
 	panic("implement me")

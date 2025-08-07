@@ -44,12 +44,6 @@ type (
 			TimersToInsert []*DbTimer,
 		) (*RangeDeleteTimersResponse, *DbError)
 
-		BatchInsertTimers(
-			ctx context.Context,
-			shardId int, shardVersion int64,
-			TimersToInsert []*DbTimer,
-		) *DbError
-
 		UpdateTimer(
 			ctx context.Context,
 			shardId int, shardVersion int64, namespace string,
