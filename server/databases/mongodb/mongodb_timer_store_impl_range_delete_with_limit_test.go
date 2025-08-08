@@ -1,0 +1,406 @@
+package mongodb
+
+import (
+	"context"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/iworkflowio/durable-timer/databases"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestRangeDeleteWithLimit_Basic(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 1
+	namespace := "test-namespace"
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Create 5 timers at different times
+	for i := 0; i < 5; i++ {
+		timer := &databases.DbTimer{
+			TimerUuid:   databases.GenerateTimerUUID(namespace, fmt.Sprintf("timer-%d", i)),
+			Namespace:   namespace,
+			Id:          fmt.Sprintf("timer-%d", i),
+			ExecuteAt:   now.Add(time.Duration(i) * time.Minute),
+			CallbackUrl: fmt.Sprintf("http://test-%d.com", i),
+			Attempts:    int32(i),
+		}
+
+		createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
+		require.Nil(t, createErr)
+	}
+
+	// Delete with limit 3 - should delete all timers in range (limit ignored for MongoDB)
+	deleteRequest := &databases.RangeDeleteTimersRequest{
+		StartTimestamp: now,
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   now.Add(10 * time.Minute),
+		EndTimeUuid:    databases.GenerateTimerUUID("max", "max"),
+	}
+
+	response, deleteErr := store.RangeDeleteWithLimit(ctx, shardId, deleteRequest, 3)
+	assert.Nil(t, deleteErr)
+	require.NotNil(t, response)
+	assert.Equal(t, 5, response.DeletedCount) // All timers in range are deleted
+
+	// Verify all timers in range are deleted (limit ignored for MongoDB)
+	for i := 0; i < 5; i++ {
+		timer, getErr := store.GetTimer(ctx, shardId, namespace, fmt.Sprintf("timer-%d", i))
+		assert.NotNil(t, getErr, fmt.Sprintf("Timer %d should be deleted", i))
+		assert.True(t, databases.IsDbErrorNotExists(getErr), fmt.Sprintf("Timer %d should not exist", i))
+		assert.Nil(t, timer)
+	}
+}
+
+func TestRangeDeleteWithLimit_NoLimit(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 2
+	namespace := "test-namespace"
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Create 3 timers
+	for i := 0; i < 3; i++ {
+		timer := &databases.DbTimer{
+			TimerUuid:   databases.GenerateTimerUUID(namespace, fmt.Sprintf("timer-%d", i)),
+			Namespace:   namespace,
+			Id:          fmt.Sprintf("timer-%d", i),
+			ExecuteAt:   now.Add(time.Duration(i) * time.Minute),
+			CallbackUrl: fmt.Sprintf("http://test-%d.com", i),
+			Attempts:    int32(i),
+		}
+
+		createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
+		require.Nil(t, createErr)
+	}
+
+	// Delete with limit 0 (no limit) - should delete all timers in range
+	deleteRequest := &databases.RangeDeleteTimersRequest{
+		StartTimestamp: now,
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   now.Add(10 * time.Minute),
+		EndTimeUuid:    databases.GenerateTimerUUID("max", "max"),
+	}
+
+	response, deleteErr := store.RangeDeleteWithLimit(ctx, shardId, deleteRequest, 0)
+	assert.Nil(t, deleteErr)
+	require.NotNil(t, response)
+	assert.Equal(t, 3, response.DeletedCount)
+
+	// Verify all timers are deleted
+	for i := 0; i < 3; i++ {
+		timer, getErr := store.GetTimer(ctx, shardId, namespace, fmt.Sprintf("timer-%d", i))
+		assert.NotNil(t, getErr)
+		assert.True(t, databases.IsDbErrorNotExists(getErr))
+		assert.Nil(t, timer)
+	}
+}
+
+func TestRangeDeleteWithLimit_EmptyRange(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 3
+	namespace := "test-namespace"
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Create a timer at 20 minutes from now
+	timer := &databases.DbTimer{
+		TimerUuid:   databases.GenerateTimerUUID(namespace, "timer-far"),
+		Namespace:   namespace,
+		Id:          "timer-far",
+		ExecuteAt:   now.Add(20 * time.Minute),
+		CallbackUrl: "http://test-far.com",
+		Attempts:    0,
+	}
+
+	createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
+	require.Nil(t, createErr)
+
+	// Delete in range that doesn't include the timer (timer is at 20 minutes)
+	deleteRequest := &databases.RangeDeleteTimersRequest{
+		StartTimestamp: now.Add(2 * time.Minute),
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   now.Add(10 * time.Minute), // Timer is at 20 minutes, so outside range
+		EndTimeUuid:    databases.GenerateTimerUUID("max", "max"),
+	}
+
+	response, deleteErr := store.RangeDeleteWithLimit(ctx, shardId, deleteRequest, 5)
+	assert.Nil(t, deleteErr)
+	require.NotNil(t, response)
+	assert.Equal(t, 0, response.DeletedCount)
+
+	// Verify timer still exists
+	retrievedTimer, getErr := store.GetTimer(ctx, shardId, namespace, "timer-far")
+	assert.Nil(t, getErr)
+	assert.Equal(t, "timer-far", retrievedTimer.Id)
+}
+
+func TestRangeDeleteWithLimit_ExactLimit(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 4
+	namespace := "test-namespace"
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Create 3 timers
+	for i := 0; i < 3; i++ {
+		timer := &databases.DbTimer{
+			TimerUuid:   databases.GenerateTimerUUID(namespace, fmt.Sprintf("timer-%d", i)),
+			Namespace:   namespace,
+			Id:          fmt.Sprintf("timer-%d", i),
+			ExecuteAt:   now.Add(time.Duration(i) * time.Minute),
+			CallbackUrl: fmt.Sprintf("http://test-%d.com", i),
+			Attempts:    int32(i),
+		}
+
+		createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
+		require.Nil(t, createErr)
+	}
+
+	// Delete with limit exactly equal to number of timers
+	deleteRequest := &databases.RangeDeleteTimersRequest{
+		StartTimestamp: now,
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   now.Add(10 * time.Minute),
+		EndTimeUuid:    databases.GenerateTimerUUID("max", "max"),
+	}
+
+	response, deleteErr := store.RangeDeleteWithLimit(ctx, shardId, deleteRequest, 3)
+	assert.Nil(t, deleteErr)
+	require.NotNil(t, response)
+	assert.Equal(t, 3, response.DeletedCount)
+
+	// Verify all timers are deleted
+	for i := 0; i < 3; i++ {
+		timer, getErr := store.GetTimer(ctx, shardId, namespace, fmt.Sprintf("timer-%d", i))
+		assert.NotNil(t, getErr)
+		assert.True(t, databases.IsDbErrorNotExists(getErr))
+		assert.Nil(t, timer)
+	}
+}
+
+func TestRangeDeleteWithLimit_LimitExceedsAvailable(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 5
+	namespace := "test-namespace"
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Create 2 timers
+	for i := 0; i < 2; i++ {
+		timer := &databases.DbTimer{
+			TimerUuid:   databases.GenerateTimerUUID(namespace, fmt.Sprintf("timer-%d", i)),
+			Namespace:   namespace,
+			Id:          fmt.Sprintf("timer-%d", i),
+			ExecuteAt:   now.Add(time.Duration(i) * time.Minute),
+			CallbackUrl: fmt.Sprintf("http://test-%d.com", i),
+			Attempts:    int32(i),
+		}
+
+		createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
+		require.Nil(t, createErr)
+	}
+
+	// Delete with limit higher than available timers
+	deleteRequest := &databases.RangeDeleteTimersRequest{
+		StartTimestamp: now,
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   now.Add(10 * time.Minute),
+		EndTimeUuid:    databases.GenerateTimerUUID("max", "max"),
+	}
+
+	response, deleteErr := store.RangeDeleteWithLimit(ctx, shardId, deleteRequest, 5)
+	assert.Nil(t, deleteErr)
+	require.NotNil(t, response)
+	assert.Equal(t, 2, response.DeletedCount) // Should delete all available (2)
+
+	// Verify all available timers are deleted
+	for i := 0; i < 2; i++ {
+		timer, getErr := store.GetTimer(ctx, shardId, namespace, fmt.Sprintf("timer-%d", i))
+		assert.NotNil(t, getErr)
+		assert.True(t, databases.IsDbErrorNotExists(getErr))
+		assert.Nil(t, timer)
+	}
+}
+
+func TestRangeDeleteWithLimit_WithPayload(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 6
+	namespace := "test-namespace"
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Create 4 timers with payloads
+	for i := 0; i < 4; i++ {
+		payload := map[string]interface{}{
+			"key": fmt.Sprintf("payload-%d", i),
+		}
+
+		timer := &databases.DbTimer{
+			TimerUuid:   databases.GenerateTimerUUID(namespace, fmt.Sprintf("timer-payload-%d", i)),
+			Namespace:   namespace,
+			Id:          fmt.Sprintf("timer-payload-%d", i),
+			ExecuteAt:   now.Add(time.Duration(i) * time.Minute),
+			CallbackUrl: fmt.Sprintf("http://test-%d.com", i),
+			Payload:     payload,
+			Attempts:    int32(i),
+		}
+
+		createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
+		require.Nil(t, createErr)
+	}
+
+	// Delete with limit 2 (limit ignored for MongoDB)
+	deleteRequest := &databases.RangeDeleteTimersRequest{
+		StartTimestamp: now,
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   now.Add(10 * time.Minute),
+		EndTimeUuid:    databases.GenerateTimerUUID("max", "max"),
+	}
+
+	response, deleteErr := store.RangeDeleteWithLimit(ctx, shardId, deleteRequest, 2)
+	assert.Nil(t, deleteErr)
+	require.NotNil(t, response)
+	assert.Equal(t, 4, response.DeletedCount) // All timers in range are deleted
+
+	// Verify all timers in range are deleted (limit ignored for MongoDB)
+	for i := 0; i < 4; i++ {
+		timer, getErr := store.GetTimer(ctx, shardId, namespace, fmt.Sprintf("timer-payload-%d", i))
+		assert.NotNil(t, getErr, fmt.Sprintf("Timer %d should be deleted", i))
+		assert.True(t, databases.IsDbErrorNotExists(getErr))
+		assert.Nil(t, timer)
+	}
+}
+
+func TestRangeDeleteWithLimit_TimeOrdering(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 7
+	namespace := "test-namespace"
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Create 4 timers with different execution times (not in creation order)
+	timers := []struct {
+		id        string
+		executeAt time.Time
+	}{
+		{"timer-c", now.Add(3 * time.Minute)}, // Third
+		{"timer-a", now.Add(1 * time.Minute)}, // First
+		{"timer-d", now.Add(4 * time.Minute)}, // Fourth
+		{"timer-b", now.Add(2 * time.Minute)}, // Second
+	}
+
+	for _, timerInfo := range timers {
+		timer := &databases.DbTimer{
+			TimerUuid:   databases.GenerateTimerUUID(namespace, timerInfo.id),
+			Namespace:   namespace,
+			Id:          timerInfo.id,
+			ExecuteAt:   timerInfo.executeAt,
+			CallbackUrl: fmt.Sprintf("http://%s.com", timerInfo.id),
+			Attempts:    0,
+		}
+
+		createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
+		require.Nil(t, createErr)
+	}
+
+	// Delete with limit 2 - should delete all timers in range (limit ignored for MongoDB)
+	deleteRequest := &databases.RangeDeleteTimersRequest{
+		StartTimestamp: now,
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   now.Add(10 * time.Minute),
+		EndTimeUuid:    databases.GenerateTimerUUID("max", "max"),
+	}
+
+	response, deleteErr := store.RangeDeleteWithLimit(ctx, shardId, deleteRequest, 2)
+	assert.Nil(t, deleteErr)
+	require.NotNil(t, response)
+	assert.Equal(t, 4, response.DeletedCount) // All timers in range are deleted
+
+	// Verify all timers in range are deleted (limit ignored for MongoDB)
+	allTimers := []string{"timer-a", "timer-b", "timer-c", "timer-d"}
+
+	for _, timerId := range allTimers {
+		timer, getErr := store.GetTimer(ctx, shardId, namespace, timerId)
+		assert.NotNil(t, getErr, fmt.Sprintf("%s should be deleted", timerId))
+		assert.True(t, databases.IsDbErrorNotExists(getErr))
+		assert.Nil(t, timer)
+	}
+}
+
+func TestRangeDeleteWithLimit_PreciseRange(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 8
+	namespace := "test-namespace"
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Create 6 timers at 1-minute intervals
+	for i := 0; i < 6; i++ {
+		timer := &databases.DbTimer{
+			TimerUuid:   databases.GenerateTimerUUID(namespace, fmt.Sprintf("timer-precise-%d", i)),
+			Namespace:   namespace,
+			Id:          fmt.Sprintf("timer-precise-%d", i),
+			ExecuteAt:   now.Add(time.Duration(i) * time.Minute),
+			CallbackUrl: fmt.Sprintf("http://test-%d.com", i),
+			Attempts:    int32(i),
+		}
+
+		createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
+		require.Nil(t, createErr)
+	}
+
+	// Delete in a precise range (timers 1, 2, 3, 4) with limit 2 (limit ignored for MongoDB)
+	deleteRequest := &databases.RangeDeleteTimersRequest{
+		StartTimestamp: now.Add(30 * time.Second), // Before timer-1 (1 minute)
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   now.Add(4*time.Minute + 30*time.Second), // After timer-4 (4 minutes)
+		EndTimeUuid:    databases.GenerateTimerUUID("max", "max"),
+	}
+
+	response, deleteErr := store.RangeDeleteWithLimit(ctx, shardId, deleteRequest, 2)
+	assert.Nil(t, deleteErr)
+	require.NotNil(t, response)
+	assert.Equal(t, 4, response.DeletedCount) // All timers in range are deleted
+
+	// Verify timers 1, 2, 3, 4 are deleted (all in range), timers 0, 5 remain (outside range)
+	expectedStates := map[int]bool{
+		0: true,  // should exist (before range)
+		1: false, // should be deleted (in range)
+		2: false, // should be deleted (in range)
+		3: false, // should be deleted (in range)
+		4: false, // should be deleted (in range)
+		5: true,  // should exist (after range)
+	}
+
+	for i, shouldExist := range expectedStates {
+		timer, getErr := store.GetTimer(ctx, shardId, namespace, fmt.Sprintf("timer-precise-%d", i))
+
+		if shouldExist {
+			assert.Nil(t, getErr, fmt.Sprintf("Timer %d should exist", i))
+			assert.Equal(t, fmt.Sprintf("timer-precise-%d", i), timer.Id)
+		} else {
+			assert.NotNil(t, getErr, fmt.Sprintf("Timer %d should be deleted", i))
+			assert.True(t, databases.IsDbErrorNotExists(getErr))
+		}
+	}
+}

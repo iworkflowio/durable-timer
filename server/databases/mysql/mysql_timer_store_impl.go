@@ -533,6 +533,36 @@ func (c *MySQLTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, sha
 	}, nil
 }
 
+func (c *MySQLTimerStore) RangeDeleteWithLimit(ctx context.Context, shardId int, request *databases.RangeDeleteTimersRequest, limit int) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
+	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
+	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+
+	deleteQuery := `DELETE FROM timers 
+	                WHERE shard_id = ? AND row_type = ? 
+	                AND (timer_execute_at, timer_uuid_high, timer_uuid_low) >= (?, ?, ?)
+	                AND (timer_execute_at, timer_uuid_high, timer_uuid_low) <= (?, ?, ?)
+	                LIMIT ?`
+
+	deleteResult, deleteErr := c.db.ExecContext(ctx, deleteQuery,
+		shardId, databases.RowTypeTimer,
+		request.StartTimestamp, startUuidHigh, startUuidLow,
+		request.EndTimestamp, endUuidHigh, endUuidLow,
+		limit)
+
+	if deleteErr != nil {
+		return nil, databases.NewGenericDbError("failed to delete timers", deleteErr)
+	}
+
+	rowsAffected, rowsErr := deleteResult.RowsAffected()
+	if rowsErr != nil {
+		return nil, databases.NewGenericDbError("failed to get rows affected", rowsErr)
+	}
+
+	return &databases.RangeDeleteTimersResponse{
+		DeletedCount: int(rowsAffected),
+	}, nil
+}
+
 func (c *MySQLTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
 	// Convert ZeroUUID to high/low format for shard records
 	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)

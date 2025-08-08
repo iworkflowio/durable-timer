@@ -751,6 +751,63 @@ func (c *MongoDBTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, s
 	return result, nil
 }
 
+func (c *MongoDBTimerStore) RangeDeleteWithLimit(ctx context.Context, shardId int, request *databases.RangeDeleteTimersRequest, limit int) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
+	// Note: MongoDB limit parameter is ignored for simplicity, similar to Cassandra
+	// Convert start and end UUIDs to high/low format for precise range selection
+	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
+	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+
+	// Build delete filter for range selection
+	deleteFilter := bson.M{
+		"shard_id": shardId,
+		"row_type": databases.RowTypeTimer,
+		"$or": []bson.M{
+			{
+				"timer_execute_at": bson.M{"$gt": request.StartTimestamp},
+			},
+			{
+				"timer_execute_at": request.StartTimestamp,
+				"timer_uuid_high":  bson.M{"$gt": startUuidHigh},
+			},
+			{
+				"timer_execute_at": request.StartTimestamp,
+				"timer_uuid_high":  startUuidHigh,
+				"timer_uuid_low":   bson.M{"$gte": startUuidLow},
+			},
+		},
+	}
+
+	// Add upper bound constraint
+	deleteFilter["$and"] = []bson.M{
+		{
+			"$or": []bson.M{
+				{
+					"timer_execute_at": bson.M{"$lt": request.EndTimestamp},
+				},
+				{
+					"timer_execute_at": request.EndTimestamp,
+					"timer_uuid_high":  bson.M{"$lt": endUuidHigh},
+				},
+				{
+					"timer_execute_at": request.EndTimestamp,
+					"timer_uuid_high":  endUuidHigh,
+					"timer_uuid_low":   bson.M{"$lte": endUuidLow},
+				},
+			},
+		},
+	}
+
+	// Delete all matching documents (limit ignored)
+	deleteResult, deleteErr := c.collection.DeleteMany(ctx, deleteFilter)
+	if deleteErr != nil {
+		return nil, databases.NewGenericDbError("failed to delete timers", deleteErr)
+	}
+
+	return &databases.RangeDeleteTimersResponse{
+		DeletedCount: int(deleteResult.DeletedCount),
+	}, nil
+}
+
 func (c *MongoDBTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
 	// Convert ZeroUUID to high/low format for shard records
 	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)

@@ -50,7 +50,7 @@ type (
 			ctx context.Context,
 			shardId int,
 			request *RangeDeleteTimersRequest,
-			limit int, // Note that some databases like Cassandra don't support multiple range queries with LIMIT, so it will be ignored
+			limit int, // Note that some distributed databases like Cassandra/MongoDB/DynamoDB don't support multiple range queries with LIMIT, so it may be ignored
 		) (*RangeDeleteTimersResponse, *DbError)
 
 		UpdateTimer(

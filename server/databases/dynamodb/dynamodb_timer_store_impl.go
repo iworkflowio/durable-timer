@@ -685,6 +685,92 @@ func (d *DynamoDBTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, 
 	}, nil
 }
 
+func (d *DynamoDBTimerStore) RangeDeleteWithLimit(ctx context.Context, shardId int, request *databases.RangeDeleteTimersRequest, limit int) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
+	// Create bounds for execute_at_with_uuid comparison
+	lowerBound := databases.FormatExecuteAtWithUuid(request.StartTimestamp, request.StartTimeUuid.String())
+	upperBound := databases.FormatExecuteAtWithUuid(request.EndTimestamp, request.EndTimeUuid.String())
+
+	// Build query input with optional limit
+	queryInput := &dynamodb.QueryInput{
+		TableName:              aws.String(d.tableName),
+		IndexName:              aws.String("ExecuteAtWithUuidIndex"),
+		KeyConditionExpression: aws.String("shard_id = :shard_id AND timer_execute_at_with_uuid BETWEEN :lower_bound AND :upper_bound"),
+		FilterExpression:       aws.String("row_type = :timer_row_type"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":shard_id":       &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+			":lower_bound":    &types.AttributeValueMemberS{Value: lowerBound},
+			":upper_bound":    &types.AttributeValueMemberS{Value: upperBound},
+			":timer_row_type": &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeTimer))},
+		},
+		ScanIndexForward: aws.Bool(true),
+	}
+
+	// Apply limit if specified
+	if limit > 0 {
+		queryInput.Limit = aws.Int32(int32(limit))
+	}
+
+	result, err := d.client.Query(ctx, queryInput)
+	if err != nil {
+		return nil, databases.NewGenericDbError("failed to query timers to delete", err)
+	}
+
+	if len(result.Items) == 0 {
+		return &databases.RangeDeleteTimersResponse{DeletedCount: 0}, nil
+	}
+
+	// Delete timers using batch delete (DynamoDB has 25 items limit per batch)
+	deletedCount := 0
+	const batchSize = 25
+
+	for i := 0; i < len(result.Items); i += batchSize {
+		end := i + batchSize
+		if end > len(result.Items) {
+			end = len(result.Items)
+		}
+
+		// Prepare batch delete request
+		var writeRequests []types.WriteRequest
+		for j := i; j < end; j++ {
+			item := result.Items[j]
+			deleteRequest := types.WriteRequest{
+				DeleteRequest: &types.DeleteRequest{
+					Key: map[string]types.AttributeValue{
+						"shard_id": item["shard_id"],
+						"sort_key": item["sort_key"],
+					},
+				},
+			}
+			writeRequests = append(writeRequests, deleteRequest)
+		}
+
+		// Execute batch write
+		batchWriteInput := &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]types.WriteRequest{
+				d.tableName: writeRequests,
+			},
+		}
+
+		batchResult, batchErr := d.client.BatchWriteItem(ctx, batchWriteInput)
+		if batchErr != nil {
+			return nil, databases.NewGenericDbError("failed to batch delete timers", batchErr)
+		}
+
+		// Handle unprocessed items (retry logic could be added here if needed)
+		if len(batchResult.UnprocessedItems) > 0 {
+			// For simplicity, we'll return an error if there are unprocessed items
+			// In production, you might want to implement retry logic
+			return nil, databases.NewGenericDbError("batch delete had unprocessed items", nil)
+		}
+
+		deletedCount += len(writeRequests)
+	}
+
+	return &databases.RangeDeleteTimersResponse{
+		DeletedCount: deletedCount,
+	}, nil
+}
+
 func (d *DynamoDBTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
 	// For DynamoDB, ExecuteAt is part of the LSI sort key, making ExecuteAt changes complex (requires delete+insert)
 	// To keep the implementation simple and optimized, we don't support ExecuteAt updates
