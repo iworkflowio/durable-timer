@@ -83,6 +83,7 @@ type (
 	}
 
 	// RangeDeleteTimersRequest is the request to delete timers from a range of timestamps
+	// both start and end are inclusive
 	RangeDeleteTimersRequest struct {
 		StartTimestamp time.Time
 		StartTimeUuid  uuid.UUID

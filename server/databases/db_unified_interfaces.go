@@ -37,7 +37,7 @@ type (
 			request *RangeGetTimersRequest,
 		) (*RangeGetTimersResponse, *DbError)
 
-		DeleteTimersUpToTimestampWithBatchInsert(
+		RangeDeleteWithBatchInsert(
 			ctx context.Context,
 			shardId int, shardVersion int64,
 			request *RangeDeleteTimersRequest,

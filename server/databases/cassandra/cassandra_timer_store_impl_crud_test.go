@@ -25,7 +25,7 @@ func TestGetTimer_Success(t *testing.T) {
 	require.Equal(t, int64(1), shardVersion)
 
 	// Create a timer to retrieve - use UTC times to avoid timezone issues
-	now := time.Now().UTC().Truncate(time.Millisecond).Truncate(time.Millisecond)
+	now := time.Now().UTC().Truncate(time.Millisecond)
 	timer := &databases.DbTimer{
 		Id:                     "test-timer-get",
 		TimerUuid:              databases.GenerateTimerUUID(namespace, "test-timer-get"),
