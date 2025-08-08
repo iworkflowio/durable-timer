@@ -279,6 +279,12 @@ func TestRangeDeleteWithLimit_WithPayload(t *testing.T) {
 	namespace := "test-namespace"
 	now := time.Now().UTC().Truncate(time.Millisecond)
 
+	// First, create a shard record
+	ownerAddr := "owner-6"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	require.Nil(t, err)
+	require.Equal(t, int64(1), shardVersion)
+
 	// Create 4 timers with payloads
 	for i := 0; i < 4; i++ {
 		payload := map[string]interface{}{
@@ -286,20 +292,22 @@ func TestRangeDeleteWithLimit_WithPayload(t *testing.T) {
 		}
 
 		timer := &databases.DbTimer{
-			TimerUuid:   databases.GenerateTimerUUID(namespace, fmt.Sprintf("timer-payload-%d", i)),
-			Namespace:   namespace,
-			Id:          fmt.Sprintf("timer-payload-%d", i),
-			ExecuteAt:   now.Add(time.Duration(i) * time.Minute),
-			CallbackUrl: fmt.Sprintf("http://test-%d.com", i),
-			Payload:     payload,
-			Attempts:    int32(i),
+			TimerUuid:              databases.GenerateTimerUUID(namespace, fmt.Sprintf("timer-payload-%d", i)),
+			Namespace:              namespace,
+			Id:                     fmt.Sprintf("timer-payload-%d", i),
+			ExecuteAt:              now.Add(time.Duration(i) * time.Minute),
+			CallbackUrl:            fmt.Sprintf("http://test-%d.com", i),
+			Payload:                payload,
+			CallbackTimeoutSeconds: 30,
+			CreatedAt:              now,
+			Attempts:               int32(i),
 		}
 
 		createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
 		require.Nil(t, createErr)
 	}
 
-	// Delete with limit 2 (limit ignored for MySQL)
+	// Delete with limit 2 (MySQL now respects limit)
 	deleteRequest := &databases.RangeDeleteTimersRequest{
 		StartTimestamp: now,
 		StartTimeUuid:  databases.ZeroUUID,
@@ -310,14 +318,27 @@ func TestRangeDeleteWithLimit_WithPayload(t *testing.T) {
 	response, deleteErr := store.RangeDeleteWithLimit(ctx, shardId, deleteRequest, 2)
 	assert.Nil(t, deleteErr)
 	require.NotNil(t, response)
-	assert.Equal(t, 4, response.DeletedCount) // All timers in range are deleted
+	assert.Equal(t, 2, response.DeletedCount) // Only 2 timers should be deleted
 
-	// Verify all timers in range are deleted (limit ignored for MySQL)
+	// Verify first 2 timers are deleted, last 2 remain (MySQL now respects limit)
 	for i := 0; i < 4; i++ {
 		timer, getErr := store.GetTimer(ctx, shardId, namespace, fmt.Sprintf("timer-payload-%d", i))
-		assert.NotNil(t, getErr, fmt.Sprintf("Timer %d should be deleted", i))
-		assert.True(t, databases.IsDbErrorNotExists(getErr))
-		assert.Nil(t, timer)
+
+		if i < 2 {
+			assert.NotNil(t, getErr, fmt.Sprintf("Timer %d should be deleted", i))
+			assert.True(t, databases.IsDbErrorNotExists(getErr))
+			assert.Nil(t, timer)
+		} else {
+			assert.Nil(t, getErr, fmt.Sprintf("Timer %d should still exist", i))
+			assert.Equal(t, fmt.Sprintf("timer-payload-%d", i), timer.Id)
+			
+			// Verify payload is preserved
+			if timer.Payload != nil {
+				payloadMap, ok := timer.Payload.(map[string]interface{})
+				require.True(t, ok)
+				assert.Equal(t, fmt.Sprintf("payload-%d", i), payloadMap["key"])
+			}
+		}
 	}
 }
 
@@ -329,6 +350,12 @@ func TestRangeDeleteWithLimit_TimeOrdering(t *testing.T) {
 	shardId := 7
 	namespace := "test-namespace"
 	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// First, create a shard record
+	ownerAddr := "owner-7"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	require.Nil(t, err)
+	require.Equal(t, int64(1), shardVersion)
 
 	// Create 4 timers with different execution times (not in creation order)
 	timers := []struct {
@@ -343,19 +370,21 @@ func TestRangeDeleteWithLimit_TimeOrdering(t *testing.T) {
 
 	for _, timerInfo := range timers {
 		timer := &databases.DbTimer{
-			TimerUuid:   databases.GenerateTimerUUID(namespace, timerInfo.id),
-			Namespace:   namespace,
-			Id:          timerInfo.id,
-			ExecuteAt:   timerInfo.executeAt,
-			CallbackUrl: fmt.Sprintf("http://%s.com", timerInfo.id),
-			Attempts:    0,
+			TimerUuid:              databases.GenerateTimerUUID(namespace, timerInfo.id),
+			Namespace:              namespace,
+			Id:                     timerInfo.id,
+			ExecuteAt:              timerInfo.executeAt,
+			CallbackUrl:            fmt.Sprintf("http://%s.com", timerInfo.id),
+			CallbackTimeoutSeconds: 30,
+			CreatedAt:              now,
+			Attempts:               0,
 		}
 
 		createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
 		require.Nil(t, createErr)
 	}
 
-	// Delete with limit 2 - should delete all timers in range (limit ignored for MySQL)
+	// Delete with limit 2 - should delete earliest 2 by ExecuteAt (timer-a, timer-b)
 	deleteRequest := &databases.RangeDeleteTimersRequest{
 		StartTimestamp: now,
 		StartTimeUuid:  databases.ZeroUUID,
@@ -366,16 +395,23 @@ func TestRangeDeleteWithLimit_TimeOrdering(t *testing.T) {
 	response, deleteErr := store.RangeDeleteWithLimit(ctx, shardId, deleteRequest, 2)
 	assert.Nil(t, deleteErr)
 	require.NotNil(t, response)
-	assert.Equal(t, 4, response.DeletedCount) // All timers in range are deleted
+	assert.Equal(t, 2, response.DeletedCount) // Only 2 timers should be deleted
 
-	// Verify all timers in range are deleted (limit ignored for MySQL)
-	allTimers := []string{"timer-a", "timer-b", "timer-c", "timer-d"}
+	// Verify timer-a and timer-b are deleted (earliest ExecuteAt times)
+	expectedDeleted := []string{"timer-a", "timer-b"}
+	expectedRemaining := []string{"timer-c", "timer-d"}
 
-	for _, timerId := range allTimers {
+	for _, timerId := range expectedDeleted {
 		timer, getErr := store.GetTimer(ctx, shardId, namespace, timerId)
 		assert.NotNil(t, getErr, fmt.Sprintf("%s should be deleted", timerId))
 		assert.True(t, databases.IsDbErrorNotExists(getErr))
 		assert.Nil(t, timer)
+	}
+
+	for _, timerId := range expectedRemaining {
+		timer, getErr := store.GetTimer(ctx, shardId, namespace, timerId)
+		assert.Nil(t, getErr, fmt.Sprintf("%s should remain", timerId))
+		assert.Equal(t, timerId, timer.Id)
 	}
 }
 
@@ -388,22 +424,30 @@ func TestRangeDeleteWithLimit_PreciseRange(t *testing.T) {
 	namespace := "test-namespace"
 	now := time.Now().UTC().Truncate(time.Millisecond)
 
+	// First, create a shard record
+	ownerAddr := "owner-8"
+	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	require.Nil(t, err)
+	require.Equal(t, int64(1), shardVersion)
+
 	// Create 6 timers at 1-minute intervals
 	for i := 0; i < 6; i++ {
 		timer := &databases.DbTimer{
-			TimerUuid:   databases.GenerateTimerUUID(namespace, fmt.Sprintf("timer-precise-%d", i)),
-			Namespace:   namespace,
-			Id:          fmt.Sprintf("timer-precise-%d", i),
-			ExecuteAt:   now.Add(time.Duration(i) * time.Minute),
-			CallbackUrl: fmt.Sprintf("http://test-%d.com", i),
-			Attempts:    int32(i),
+			TimerUuid:              databases.GenerateTimerUUID(namespace, fmt.Sprintf("timer-precise-%d", i)),
+			Namespace:              namespace,
+			Id:                     fmt.Sprintf("timer-precise-%d", i),
+			ExecuteAt:              now.Add(time.Duration(i) * time.Minute),
+			CallbackUrl:            fmt.Sprintf("http://test-%d.com", i),
+			CallbackTimeoutSeconds: 30,
+			CreatedAt:              now,
+			Attempts:               int32(i),
 		}
 
 		createErr := store.CreateTimerNoLock(ctx, shardId, namespace, timer)
 		require.Nil(t, createErr)
 	}
 
-	// Delete in a precise range (timers 1, 2, 3, 4) with limit 2 (limit ignored for MySQL)
+	// Delete in a precise range (timers 1, 2, 3, 4) with limit 2 (MySQL now respects limit)
 	deleteRequest := &databases.RangeDeleteTimersRequest{
 		StartTimestamp: now.Add(30 * time.Second), // Before timer-1 (1 minute)
 		StartTimeUuid:  databases.ZeroUUID,
@@ -414,15 +458,15 @@ func TestRangeDeleteWithLimit_PreciseRange(t *testing.T) {
 	response, deleteErr := store.RangeDeleteWithLimit(ctx, shardId, deleteRequest, 2)
 	assert.Nil(t, deleteErr)
 	require.NotNil(t, response)
-	assert.Equal(t, 4, response.DeletedCount) // All timers in range are deleted
+	assert.Equal(t, 2, response.DeletedCount) // Only 2 timers should be deleted
 
-	// Verify timers 1, 2, 3, 4 are deleted (all in range), timers 0, 5 remain (outside range)
+	// Verify timers 1, 2 are deleted (first 2 in range), timers 0, 3, 4, 5 remain
 	expectedStates := map[int]bool{
 		0: true,  // should exist (before range)
-		1: false, // should be deleted (in range)
-		2: false, // should be deleted (in range)
-		3: false, // should be deleted (in range)
-		4: false, // should be deleted (in range)
+		1: false, // should be deleted (first in range, within limit)
+		2: false, // should be deleted (second in range, within limit)
+		3: true,  // should exist (third in range, beyond limit)
+		4: true,  // should exist (fourth in range, beyond limit)
 		5: true,  // should exist (after range)
 	}
 
