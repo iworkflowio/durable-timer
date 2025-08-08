@@ -69,7 +69,7 @@ func TestGetTimersUpToTimestamp_Basic(t *testing.T) {
 		Limit:         10,
 	}
 
-	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, request)
+	response, getErr := store.RangeGetTimers(ctx, shardId, request)
 	require.Nil(t, getErr)
 	require.NotNil(t, response)
 	require.Len(t, response.Timers, 2)
@@ -116,7 +116,7 @@ func TestGetTimersUpToTimestamp_WithLimit(t *testing.T) {
 		Limit:         3,
 	}
 
-	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, request)
+	response, getErr := store.RangeGetTimers(ctx, shardId, request)
 	require.Nil(t, getErr)
 	require.NotNil(t, response)
 	assert.Len(t, response.Timers, 3)
@@ -172,7 +172,7 @@ func TestGetTimersUpToTimestamp_WithPayloadAndRetryPolicy(t *testing.T) {
 		Limit:         10,
 	}
 
-	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, request)
+	response, getErr := store.RangeGetTimers(ctx, shardId, request)
 	require.Nil(t, getErr)
 	require.NotNil(t, response)
 	require.Len(t, response.Timers, 1)
@@ -217,7 +217,7 @@ func TestGetTimersUpToTimestamp_EmptyResult(t *testing.T) {
 		Limit:         10,
 	}
 
-	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, request)
+	response, getErr := store.RangeGetTimers(ctx, shardId, request)
 	require.Nil(t, getErr)
 	require.NotNil(t, response)
 	assert.Len(t, response.Timers, 0)
@@ -280,7 +280,7 @@ func TestGetTimersUpToTimestamp_TimeOrdering(t *testing.T) {
 		Limit:         10,
 	}
 
-	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, request)
+	response, getErr := store.RangeGetTimers(ctx, shardId, request)
 	require.Nil(t, getErr)
 	require.NotNil(t, response)
 	require.Len(t, response.Timers, 3)

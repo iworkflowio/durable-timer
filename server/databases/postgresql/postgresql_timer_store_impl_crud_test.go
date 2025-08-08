@@ -425,7 +425,7 @@ func TestGetTimersUpToTimestamp_WithAttempts(t *testing.T) {
 		Limit:         10,
 	}
 
-	response, getErr := store.GetTimersUpToTimestamp(ctx, shardId, request)
+	response, getErr := store.RangeGetTimers(ctx, shardId, request)
 	assert.Nil(t, getErr)
 	require.NotNil(t, response)
 	require.Len(t, response.Timers, 1)

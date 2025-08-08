@@ -31,7 +31,7 @@ type (
 			timer *DbTimer,
 		) (err *DbError)
 
-		GetTimersUpToTimestamp(
+		RangeGetTimers(
 			ctx context.Context,
 			shardId int,
 			request *RangeGetTimersRequest,

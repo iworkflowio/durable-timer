@@ -428,7 +428,7 @@ func (d *DynamoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int,
 	return nil
 }
 
-func (d *DynamoDBTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
+func (d *DynamoDBTimerStore) RangeGetTimers(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
 	// Create upper bound for execute_at_with_uuid comparison
 	upperBound := databases.FormatExecuteAtWithUuid(request.UpToTimestamp, "ffffffff-ffff-ffff-ffff-ffffffffffff")
 

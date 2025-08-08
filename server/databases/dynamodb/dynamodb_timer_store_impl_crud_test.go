@@ -384,7 +384,7 @@ func TestCreateTimerAttemptsPreservation(t *testing.T) {
 		UpToTimestamp: now.Add(5 * time.Minute),
 		Limit:         10,
 	}
-	response, getErr4 := store.GetTimersUpToTimestamp(ctx, shardId, request)
+	response, getErr4 := store.RangeGetTimers(ctx, shardId, request)
 	require.Nil(t, getErr4)
 	require.Len(t, response.Timers, 3)
 

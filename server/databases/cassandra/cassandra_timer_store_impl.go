@@ -257,7 +257,7 @@ func (c *CassandraTimerStore) CreateTimerNoLock(ctx context.Context, shardId int
 	return nil
 }
 
-func (c *CassandraTimerStore) GetTimersUpToTimestamp(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
+func (c *CassandraTimerStore) RangeGetTimers(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
 	// Query timers up to the specified timestamp, ordered by execution time
 	query := `SELECT shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low,
 	                 timer_id, timer_namespace, timer_callback_url, timer_payload, 
