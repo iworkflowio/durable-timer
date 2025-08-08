@@ -474,7 +474,7 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_AttemptsPreservation(t *testin
 	timersToInsert := []*databases.DbTimer{timerToInsert1, timerToInsert2}
 
 	// Execute delete and batch insert
-	response, deleteErr := store.RangeDeleteWithBatchInsert(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
+	response, deleteErr := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
 	require.Nil(t, deleteErr)
 	require.NotNil(t, response)
 	assert.Equal(t, 1, response.DeletedCount) // Should delete timerToDelete
@@ -566,7 +566,7 @@ func TestGetTimersUpToTimestamp_AttemptsPreservation(t *testing.T) {
 		StartTimeUuid:  databases.ZeroUUID,
 		EndTimestamp:   now.Add(5 * time.Minute),
 		EndTimeUuid:    databases.MaxUUID,
-		Limit:         10,
+		Limit:          10,
 	}
 
 	response, getErr := store.RangeGetTimers(ctx, shardId, request)

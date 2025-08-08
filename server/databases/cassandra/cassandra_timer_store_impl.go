@@ -345,7 +345,7 @@ func (c *CassandraTimerStore) RangeGetTimers(ctx context.Context, shardId int, r
 	}, nil
 }
 
-func (c *CassandraTimerStore) RangeDeleteWithBatchInsert(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
+func (c *CassandraTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
 	// Convert ZeroUUID to high/low format for shard records
 	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
 

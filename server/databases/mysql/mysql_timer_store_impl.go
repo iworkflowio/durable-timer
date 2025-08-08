@@ -412,7 +412,7 @@ func (c *MySQLTimerStore) RangeGetTimers(ctx context.Context, shardId int, reque
 	}, nil
 }
 
-func (c *MySQLTimerStore) RangeDeleteWithBatchInsert(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
+func (c *MySQLTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
 	// Convert start and end UUIDs to high/low format for precise range selection
 	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
 	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)

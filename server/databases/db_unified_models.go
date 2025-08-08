@@ -96,7 +96,6 @@ type (
 		StartTimeUuid  uuid.UUID
 		EndTimestamp   time.Time
 		EndTimeUuid    uuid.UUID
-		// TODO add limit
 	}
 
 	RangeDeleteTimersResponse struct {

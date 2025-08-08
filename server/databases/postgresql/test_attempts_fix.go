@@ -138,7 +138,7 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_WithAttempts(t *testing.T) {
 
 	timersToInsert := []*databases.DbTimer{newTimer}
 
-	response, deleteErr := store.RangeDeleteWithBatchInsert(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
+	response, deleteErr := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
 	assert.Nil(t, deleteErr)
 	require.NotNil(t, response)
 	assert.Equal(t, 1, response.DeletedCount)

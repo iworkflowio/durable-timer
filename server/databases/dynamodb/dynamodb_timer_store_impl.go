@@ -532,7 +532,7 @@ func (d *DynamoDBTimerStore) RangeGetTimers(ctx context.Context, shardId int, re
 	}, nil
 }
 
-func (d *DynamoDBTimerStore) RangeDeleteWithBatchInsert(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
+func (d *DynamoDBTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
 	// Create bounds for execute_at_with_uuid comparison
 	lowerBound := databases.FormatExecuteAtWithUuid(request.StartTimestamp, request.StartTimeUuid.String())
 	upperBound := databases.FormatExecuteAtWithUuid(request.EndTimestamp, request.EndTimeUuid.String())

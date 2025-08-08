@@ -100,7 +100,7 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_Basic(t *testing.T) {
 	timersToInsert := []*databases.DbTimer{newTimer1, newTimer2}
 
 	// Execute delete and insert operation
-	response, deleteErr := store.RangeDeleteWithBatchInsert(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
+	response, deleteErr := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
 	assert.Nil(t, deleteErr)
 	require.NotNil(t, response)
 	assert.Equal(t, 2, response.DeletedCount) // MySQL returns actual deleted count
@@ -207,7 +207,7 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ShardVersionMismatch(t *testin
 
 	// Try to execute with wrong shard version
 	wrongShardVersion := actualShardVersion + 1
-	_, deleteErr := store.RangeDeleteWithBatchInsert(ctx, shardId, wrongShardVersion, deleteRequest, timersToInsert)
+	_, deleteErr := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, wrongShardVersion, deleteRequest, timersToInsert)
 
 	// Should fail with shard condition error
 	assert.NotNil(t, deleteErr)
@@ -300,7 +300,7 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_InsertInDeleteRange(t *testing
 	timersToInsert := []*databases.DbTimer{newTimer1, newTimer2}
 
 	// Execute delete and insert operation
-	response, deleteErr := store.RangeDeleteWithBatchInsert(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
+	response, deleteErr := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
 	assert.Nil(t, deleteErr)
 	require.NotNil(t, response)
 	assert.Equal(t, 2, response.DeletedCount) // MySQL returns actual deleted count
@@ -392,7 +392,7 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_EmptyDelete(t *testing.T) {
 	timersToInsert := []*databases.DbTimer{newTimer}
 
 	// Execute delete and insert operation
-	response, deleteErr := store.RangeDeleteWithBatchInsert(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
+	response, deleteErr := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
 	assert.Nil(t, deleteErr)
 	require.NotNil(t, response)
 	assert.Equal(t, 0, response.DeletedCount) // Should delete 0 timers
@@ -462,7 +462,7 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_NoInserts(t *testing.T) {
 	timersToInsert := []*databases.DbTimer{}
 
 	// Execute delete operation with no inserts
-	response, deleteErr := store.RangeDeleteWithBatchInsert(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
+	response, deleteErr := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
 	assert.Nil(t, deleteErr)
 	require.NotNil(t, response)
 	assert.Equal(t, 2, response.DeletedCount) // Should delete 2 timers
@@ -538,7 +538,7 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ConcurrentOperations(t *testin
 
 			timersToInsert := []*databases.DbTimer{newTimer}
 
-			_, deleteErr := store.RangeDeleteWithBatchInsert(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
+			_, deleteErr := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
 			results[idx] = deleteErr
 		}(i)
 	}
@@ -635,14 +635,14 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ShardVersionChanged(t *testing
 	timersToInsert := []*databases.DbTimer{newTimer}
 
 	// Try to execute with old shard version (should fail)
-	_, deleteErr := store.RangeDeleteWithBatchInsert(ctx, shardId, initialShardVersion, deleteRequest, timersToInsert)
+	_, deleteErr := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, initialShardVersion, deleteRequest, timersToInsert)
 	assert.NotNil(t, deleteErr)
 	assert.True(t, deleteErr.ShardConditionFail)
 	// MySQL reads and returns the actual conflicting version
 	assert.Equal(t, newShardVersion, deleteErr.ConflictShardVersion)
 
 	// Try to execute with new shard version (should succeed)
-	response, deleteErr2 := store.RangeDeleteWithBatchInsert(ctx, shardId, newShardVersion, deleteRequest, timersToInsert)
+	response, deleteErr2 := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, newShardVersion, deleteRequest, timersToInsert)
 	assert.Nil(t, deleteErr2)
 	require.NotNil(t, response)
 	assert.Equal(t, 1, response.DeletedCount) // Should delete the original timer
@@ -710,7 +710,7 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_InvalidPayloadSerialization(t 
 	timersToInsert := []*databases.DbTimer{newTimer}
 
 	// Should fail with marshaling error
-	_, deleteErr := store.RangeDeleteWithBatchInsert(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
+	_, deleteErr := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
 	assert.NotNil(t, deleteErr)
 	assert.Contains(t, deleteErr.CustomMessage, "failed to marshal timer payload")
 
@@ -774,7 +774,7 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_LargeTimestamp(t *testing.T) {
 	timersToInsert := []*databases.DbTimer{newTimer}
 
 	// Execute delete and insert operation
-	response, deleteErr := store.RangeDeleteWithBatchInsert(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
+	response, deleteErr := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, shardVersion, deleteRequest, timersToInsert)
 	assert.Nil(t, deleteErr)
 	require.NotNil(t, response)
 	assert.Equal(t, 3, response.DeletedCount) // Should delete first 3 timers

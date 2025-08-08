@@ -37,11 +37,20 @@ type (
 			request *RangeGetTimersRequest,
 		) (*RangeGetTimersResponse, *DbError)
 
-		RangeDeleteWithBatchInsert(
+		// RangeDeleteWithBatchInsertTxn is a transaction that deletes timers in a range and inserts new timers
+		RangeDeleteWithBatchInsertTxn(
 			ctx context.Context,
 			shardId int, shardVersion int64,
 			request *RangeDeleteTimersRequest,
 			TimersToInsert []*DbTimer,
+		) (*RangeDeleteTimersResponse, *DbError)
+
+		// RangeDeleteWithLimit is a non-transactional operation that deletes timers in a range 
+		RangeDeleteWithLimit(
+			ctx context.Context,
+			shardId int,
+			request *RangeDeleteTimersRequest,
+			limit int,
 		) (*RangeDeleteTimersResponse, *DbError)
 
 		UpdateTimer(
