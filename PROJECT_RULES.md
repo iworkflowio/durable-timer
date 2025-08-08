@@ -24,6 +24,7 @@
 - Document all public APIs and interfaces
 - Use meaningful variable and function names
 - Include error handling for all failure scenarios
+- **Write minimal and concise code** - Avoid lengthy, verbose implementations. Prefer direct, straightforward solutions over complex multi-step approaches
 
 ### 4. Distributed Systems Principles
 - Design for failure - assume components will fail

@@ -442,6 +442,28 @@ func (c *CassandraTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context,
 	}, nil
 }
 
+func (c *CassandraTimerStore) RangeDeleteWithLimit(ctx context.Context, shardId int, request *databases.RangeDeleteTimersRequest, limit int) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
+	// Note: Cassandra doesn't support LIMIT in DELETE statements, so limit parameter is ignored
+	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
+	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+
+	deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? 
+	                AND (timer_execute_at, timer_uuid_high, timer_uuid_low) >= (?, ?, ?)
+	                AND (timer_execute_at, timer_uuid_high, timer_uuid_low) <= (?, ?, ?)`
+
+	err := c.session.Query(deleteQuery,
+		shardId, databases.RowTypeTimer,
+		request.StartTimestamp, startUuidHigh, startUuidLow,
+		request.EndTimestamp, endUuidHigh, endUuidLow,
+	).WithContext(ctx).Exec()
+
+	if err != nil {
+		return nil, databases.NewGenericDbError("failed to execute range delete", err)
+	}
+
+	return &databases.RangeDeleteTimersResponse{DeletedCount: 0}, nil
+}
+
 func (c *CassandraTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
 	// Convert ZeroUUID to high/low format for shard records
 	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
