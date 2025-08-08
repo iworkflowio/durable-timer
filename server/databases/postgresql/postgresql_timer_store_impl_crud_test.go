@@ -421,7 +421,10 @@ func TestGetTimersUpToTimestamp_WithAttempts(t *testing.T) {
 
 	// Get timers up to now (should include timer1 but not timer2)
 	request := &databases.RangeGetTimersRequest{
-		UpToTimestamp: now,
+		StartTimestamp: time.Unix(0, 0),
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   now,
+		EndTimeUuid:    databases.MaxUUID,
 		Limit:         10,
 	}
 

@@ -317,16 +317,25 @@ func (p *PostgreSQLTimerStore) CreateTimerNoLock(ctx context.Context, shardId in
 }
 
 func (p *PostgreSQLTimerStore) RangeGetTimers(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
-	// Query timers up to the specified timestamp, ordered by execution time
+	// Convert start and end UUIDs to high/low format for precise range selection
+	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
+	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+
+	// Query timers in the specified range, ordered by execution time and UUID
 	query := `SELECT shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low,
 	                 timer_id, timer_namespace, timer_callback_url, timer_payload, 
 	                 timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts
 	          FROM timers 
-	          WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at <= $3
+	          WHERE shard_id = $1 AND row_type = $2 
+	            AND (timer_execute_at, timer_uuid_high, timer_uuid_low) >= ($3, $4, $5)
+	            AND (timer_execute_at, timer_uuid_high, timer_uuid_low) <= ($6, $7, $8)
 	          ORDER BY timer_execute_at ASC, timer_uuid_high ASC, timer_uuid_low ASC
-	          LIMIT $4`
+	          LIMIT $9`
 
-	rows, err := p.db.QueryContext(ctx, query, shardId, databases.RowTypeTimer, request.UpToTimestamp, request.Limit)
+	rows, err := p.db.QueryContext(ctx, query, shardId, databases.RowTypeTimer,
+		request.StartTimestamp, startUuidHigh, startUuidLow,
+		request.EndTimestamp, endUuidHigh, endUuidLow,
+		request.Limit)
 	if err != nil {
 		return nil, databases.NewGenericDbError("failed to query timers", err)
 	}

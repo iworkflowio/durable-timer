@@ -562,7 +562,10 @@ func TestGetTimersUpToTimestamp_AttemptsPreservation(t *testing.T) {
 
 	// Retrieve timers using GetTimersUpToTimestamp
 	request := &databases.RangeGetTimersRequest{
-		UpToTimestamp: now.Add(5 * time.Minute),
+		StartTimestamp: time.Unix(0, 0),
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   now.Add(5 * time.Minute),
+		EndTimeUuid:    databases.MaxUUID,
 		Limit:         10,
 	}
 

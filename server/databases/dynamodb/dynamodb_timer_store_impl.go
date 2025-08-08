@@ -429,17 +429,19 @@ func (d *DynamoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int,
 }
 
 func (d *DynamoDBTimerStore) RangeGetTimers(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
-	// Create upper bound for execute_at_with_uuid comparison
-	upperBound := databases.FormatExecuteAtWithUuid(request.UpToTimestamp, "ffffffff-ffff-ffff-ffff-ffffffffffff")
+	// Create bounds for execute_at_with_uuid comparison
+	lowerBound := databases.FormatExecuteAtWithUuid(request.StartTimestamp, request.StartTimeUuid.String())
+	upperBound := databases.FormatExecuteAtWithUuid(request.EndTimestamp, request.EndTimeUuid.String())
 
-	// Query using the ExecuteAtWithUuidIndex LSI
+	// Query using the ExecuteAtWithUuidIndex LSI with range
 	queryInput := &dynamodb.QueryInput{
 		TableName:              aws.String(d.tableName),
 		IndexName:              aws.String("ExecuteAtWithUuidIndex"),
-		KeyConditionExpression: aws.String("shard_id = :shard_id AND timer_execute_at_with_uuid <= :upper_bound"),
+		KeyConditionExpression: aws.String("shard_id = :shard_id AND timer_execute_at_with_uuid BETWEEN :lower_bound AND :upper_bound"),
 		FilterExpression:       aws.String("row_type = :timer_row_type"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":shard_id":       &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+			":lower_bound":    &types.AttributeValueMemberS{Value: lowerBound},
 			":upper_bound":    &types.AttributeValueMemberS{Value: upperBound},
 			":timer_row_type": &types.AttributeValueMemberN{Value: strconv.Itoa(int(databases.RowTypeTimer))},
 		},

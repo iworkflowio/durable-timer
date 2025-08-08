@@ -65,8 +65,11 @@ func TestGetTimersUpToTimestamp_Basic(t *testing.T) {
 
 	// Test: Get timers up to 2 minutes from base time (should return timer-1 and timer-2)
 	request := &databases.RangeGetTimersRequest{
-		UpToTimestamp: baseTime.Add(2 * time.Minute),
-		Limit:         10,
+		StartTimestamp: baseTime.Add(-1 * time.Hour),  // Start from 1 hour before
+		StartTimeUuid:  databases.ZeroUUID,            // Use zero UUID as start
+		EndTimestamp:   baseTime.Add(2 * time.Minute), // End at 2 minutes
+		EndTimeUuid:    databases.MaxUUID,             // Use max UUID as end
+		Limit:          10,
 	}
 
 	response, getErr := store.RangeGetTimers(ctx, shardId, request)
@@ -112,8 +115,11 @@ func TestGetTimersUpToTimestamp_WithLimit(t *testing.T) {
 
 	// Test: Get timers with limit of 3
 	request := &databases.RangeGetTimersRequest{
-		UpToTimestamp: baseTime.Add(10 * time.Minute), // All timers should be within this range
-		Limit:         3,
+		StartTimestamp: time.Unix(0, 0),
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   baseTime.Add(10 * time.Minute),
+		EndTimeUuid:    databases.MaxUUID, // All timers should be within this range
+		Limit:          3,
 	}
 
 	response, getErr := store.RangeGetTimers(ctx, shardId, request)
@@ -168,8 +174,11 @@ func TestGetTimersUpToTimestamp_WithPayloadAndRetryPolicy(t *testing.T) {
 
 	// Retrieve the timer
 	request := &databases.RangeGetTimersRequest{
-		UpToTimestamp: baseTime.Add(5 * time.Minute),
-		Limit:         10,
+		StartTimestamp: time.Unix(0, 0),
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   baseTime.Add(5 * time.Minute),
+		EndTimeUuid:    databases.MaxUUID,
+		Limit:          10,
 	}
 
 	response, getErr := store.RangeGetTimers(ctx, shardId, request)
@@ -213,8 +222,11 @@ func TestGetTimersUpToTimestamp_EmptyResult(t *testing.T) {
 
 	// Query for timers
 	request := &databases.RangeGetTimersRequest{
-		UpToTimestamp: time.Now().Add(5 * time.Minute),
-		Limit:         10,
+		StartTimestamp: time.Unix(0, 0),
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   time.Now().Add(5 * time.Minute),
+		EndTimeUuid:    databases.MaxUUID,
+		Limit:          10,
 	}
 
 	response, getErr := store.RangeGetTimers(ctx, shardId, request)
@@ -276,8 +288,11 @@ func TestGetTimersUpToTimestamp_TimeOrdering(t *testing.T) {
 
 	// Query all timers
 	request := &databases.RangeGetTimersRequest{
-		UpToTimestamp: baseTime.Add(5 * time.Minute),
-		Limit:         10,
+		StartTimestamp: time.Unix(0, 0),
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   baseTime.Add(5 * time.Minute),
+		EndTimeUuid:    databases.MaxUUID,
+		Limit:          10,
 	}
 
 	response, getErr := store.RangeGetTimers(ctx, shardId, request)

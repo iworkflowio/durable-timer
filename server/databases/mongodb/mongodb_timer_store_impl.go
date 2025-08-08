@@ -439,12 +439,86 @@ func (m *MongoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, 
 	return nil
 }
 
+// buildRangeCondition creates a MongoDB condition for tuple comparison (timestamp, uuid_high, uuid_low)
+// operator should be "$gte" for start boundary or "$lte" for end boundary
+func buildRangeCondition(operator string, timestamp time.Time, uuidHigh, uuidLow int64) bson.M {
+	switch operator {
+	case "$gte":
+		// For >= comparison: (timestamp, uuid_high, uuid_low) >= (target_timestamp, target_uuid_high, target_uuid_low)
+		return bson.M{
+			"$or": []bson.M{
+				// Case 1: timestamp > target_timestamp (clearly after)
+				{"timer_execute_at": bson.M{"$gt": timestamp}},
+				// Case 2: timestamp == target_timestamp, check UUID
+				{
+					"$and": []bson.M{
+						{"timer_execute_at": timestamp},
+						{
+							"$or": []bson.M{
+								// Case 2a: same timestamp, uuid_high > target_uuid_high
+								{"timer_uuid_high": bson.M{"$gt": uuidHigh}},
+								// Case 2b: same timestamp, same uuid_high, uuid_low >= target_uuid_low
+								{
+									"$and": []bson.M{
+										{"timer_uuid_high": uuidHigh},
+										{"timer_uuid_low": bson.M{"$gte": uuidLow}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	case "$lte":
+		// For <= comparison: (timestamp, uuid_high, uuid_low) <= (target_timestamp, target_uuid_high, target_uuid_low)
+		return bson.M{
+			"$or": []bson.M{
+				// Case 1: timestamp < target_timestamp (clearly before)
+				{"timer_execute_at": bson.M{"$lt": timestamp}},
+				// Case 2: timestamp == target_timestamp, check UUID
+				{
+					"$and": []bson.M{
+						{"timer_execute_at": timestamp},
+						{
+							"$or": []bson.M{
+								// Case 2a: same timestamp, uuid_high < target_uuid_high
+								{"timer_uuid_high": bson.M{"$lt": uuidHigh}},
+								// Case 2b: same timestamp, same uuid_high, uuid_low <= target_uuid_low
+								{
+									"$and": []bson.M{
+										{"timer_uuid_high": uuidHigh},
+										{"timer_uuid_low": bson.M{"$lte": uuidLow}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	default:
+		// should not happen
+		panic("unsupported operator")
+	}
+}
+
 func (c *MongoDBTimerStore) RangeGetTimers(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
-	// Query timers up to the specified timestamp, ordered by execution time
+	// Convert start and end UUIDs to high/low format for precise range selection
+	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
+	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+
+	// Query timers in the specified range with precise UUID boundaries
+	// Using a cleaner approach than the original complex nested query
+
+	// Build the range filter step by step for clarity
+	startCondition := buildRangeCondition("$gte", request.StartTimestamp, startUuidHigh, startUuidLow)
+	endCondition := buildRangeCondition("$lte", request.EndTimestamp, endUuidHigh, endUuidLow)
+
 	filter := bson.M{
-		"shard_id":         shardId,
-		"row_type":         databases.RowTypeTimer,
-		"timer_execute_at": bson.M{"$lte": request.UpToTimestamp},
+		"shard_id": shardId,
+		"row_type": databases.RowTypeTimer,
+		"$and":     []bson.M{startCondition, endCondition},
 	}
 
 	// Create find options with sorting and limit

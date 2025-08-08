@@ -381,7 +381,10 @@ func TestCreateTimerAttemptsPreservation(t *testing.T) {
 
 	// Test GetTimersUpToTimestamp returns correct Attempts
 	request := &databases.RangeGetTimersRequest{
-		UpToTimestamp: now.Add(5 * time.Minute),
+		StartTimestamp: time.Unix(0, 0),
+		StartTimeUuid:  databases.ZeroUUID,
+		EndTimestamp:   now.Add(5 * time.Minute),
+		EndTimeUuid:    databases.MaxUUID,
 		Limit:         10,
 	}
 	response, getErr4 := store.RangeGetTimers(ctx, shardId, request)

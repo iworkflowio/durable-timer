@@ -14,7 +14,11 @@ const RowTypeTimer = int16(2) // 2 = timer record
 // 00000000-0000-0000-0000-000000000000
 var ZeroTimestamp = time.Unix(1, 0)
 var ZeroUUID = uuid.UUID{}
-var ZeroUUIDString = ZeroUUID.String()
+var ZeroUUIDString = ZeroUUID.String() // "00000000-0000-0000-0000-000000000000"
+var MaxUUID = uuid.UUID{
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+}
+var MaxUUIDString = MaxUUID.String() // "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
 type (
 	ShardInfo struct {
@@ -74,8 +78,11 @@ type (
 	}
 
 	RangeGetTimersRequest struct {
-		UpToTimestamp time.Time
-		Limit         int
+		StartTimestamp time.Time
+		StartTimeUuid  uuid.UUID
+		EndTimestamp   time.Time
+		EndTimeUuid    uuid.UUID
+		Limit          int
 	}
 
 	RangeGetTimersResponse struct {
@@ -89,6 +96,7 @@ type (
 		StartTimeUuid  uuid.UUID
 		EndTimestamp   time.Time
 		EndTimeUuid    uuid.UUID
+		// TODO add limit
 	}
 
 	RangeDeleteTimersResponse struct {
@@ -101,6 +109,7 @@ type (
 		TimerId string
 
 		// New execution time for the timer
+		// TODO remove this support to simplify the engine implementation
 		ExecuteAt time.Time
 
 		// New callback URL, returning 200 with CallbackResponse means success, otherwise will be retried.

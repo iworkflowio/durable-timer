@@ -258,19 +258,26 @@ func (c *CassandraTimerStore) CreateTimerNoLock(ctx context.Context, shardId int
 }
 
 func (c *CassandraTimerStore) RangeGetTimers(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
-	// Query timers up to the specified timestamp, ordered by execution time
+	// Convert start and end UUIDs to high/low format for precise range selection
+	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
+	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+
+	// Query timers in the specified range, ordered by execution time and UUID
 	query := `SELECT shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low,
 	                 timer_id, timer_namespace, timer_callback_url, timer_payload, 
 	                 timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts
 	          FROM timers 
-	          WHERE shard_id = ? AND row_type = ? AND timer_execute_at <= ?
+	          WHERE shard_id = ? AND row_type = ? 
+	            AND (timer_execute_at, timer_uuid_high, timer_uuid_low) >= (?, ?, ?)
+	            AND (timer_execute_at, timer_uuid_high, timer_uuid_low) <= (?, ?, ?)
 	          ORDER BY timer_execute_at ASC, timer_uuid_high ASC, timer_uuid_low ASC
 	          LIMIT ?`
 
 	iter := c.session.Query(query,
 		shardId,
 		databases.RowTypeTimer,
-		request.UpToTimestamp,
+		request.StartTimestamp, startUuidHigh, startUuidLow,
+		request.EndTimestamp, endUuidHigh, endUuidLow,
 		request.Limit).Iter()
 
 	var timers []*databases.DbTimer
