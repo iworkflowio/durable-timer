@@ -21,9 +21,7 @@ func TestGetTimer_Success(t *testing.T) {
 	// First, create a shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	assert.Nil(t, err)
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
 
@@ -97,9 +95,7 @@ func TestDeleteTimer_Success(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	assert.Nil(t, err)
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
 
@@ -149,9 +145,7 @@ func TestDeleteTimer_NotExists(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	assert.Nil(t, err)
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
 
@@ -171,9 +165,7 @@ func TestUpdateTimer_InPlaceUpdate(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	assert.Nil(t, err)
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
 
@@ -251,9 +243,7 @@ func TestUpdateTimer_ExecutionTimeChange(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	assert.Nil(t, err)
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
 
@@ -313,9 +303,7 @@ func TestUpdateTimer_NotExists(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	assert.Nil(t, err)
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
 
@@ -342,9 +330,7 @@ func TestCreateTimerAttemptsPreservation(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	assert.Nil(t, err)
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
 

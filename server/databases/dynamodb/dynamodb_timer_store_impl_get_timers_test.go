@@ -22,9 +22,7 @@ func TestGetTimersUpToTimestamp_Basic(t *testing.T) {
 	// First, create a shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	assert.Nil(t, err)
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
 
@@ -100,9 +98,7 @@ func TestGetTimersUpToTimestamp_WithLimit(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	assert.Nil(t, err)
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
 
@@ -154,9 +150,7 @@ func TestGetTimersUpToTimestamp_WithPayloadAndRetryPolicy(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	assert.Nil(t, err)
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
 
@@ -232,9 +226,7 @@ func TestGetTimersUpToTimestamp_EmptyResult(t *testing.T) {
 	// Create shard record but no timers
 	ownerAddr := "owner-1"
 	_, _, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	assert.Nil(t, err)
 
 	// Query for timers
 	request := &databases.RangeGetTimersRequest{
@@ -262,9 +254,7 @@ func TestGetTimersUpToTimestamp_TimeOrdering(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	assert.Nil(t, err)
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
 
