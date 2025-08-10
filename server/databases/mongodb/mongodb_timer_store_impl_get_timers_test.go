@@ -21,7 +21,11 @@ func TestGetTimersUpToTimestamp_Basic(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -69,7 +73,7 @@ func TestGetTimersUpToTimestamp_Basic(t *testing.T) {
 		StartTimeUuid:  databases.ZeroUUID,
 		EndTimestamp:   baseTime.Add(2 * time.Minute),
 		EndTimeUuid:    databases.MaxUUID,
-		Limit:         10,
+		Limit:          10,
 	}
 
 	response, getErr := store.RangeGetTimers(ctx, shardId, request)
@@ -94,7 +98,11 @@ func TestGetTimersUpToTimestamp_WithLimit(t *testing.T) {
 
 	// Create shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 
 	// Create 5 timers
@@ -119,7 +127,7 @@ func TestGetTimersUpToTimestamp_WithLimit(t *testing.T) {
 		StartTimeUuid:  databases.ZeroUUID,
 		EndTimestamp:   baseTime.Add(10 * time.Minute),
 		EndTimeUuid:    databases.MaxUUID, // All timers should be within this range
-		Limit:         3,
+		Limit:          3,
 	}
 
 	response, getErr := store.RangeGetTimers(ctx, shardId, request)
@@ -143,7 +151,11 @@ func TestGetTimersUpToTimestamp_WithPayloadAndRetryPolicy(t *testing.T) {
 
 	// Create shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 
 	// Create timer with payload and retry policy
@@ -178,7 +190,7 @@ func TestGetTimersUpToTimestamp_WithPayloadAndRetryPolicy(t *testing.T) {
 		StartTimeUuid:  databases.ZeroUUID,
 		EndTimestamp:   baseTime.Add(5 * time.Minute),
 		EndTimeUuid:    databases.MaxUUID,
-		Limit:         10,
+		Limit:          10,
 	}
 
 	response, getErr := store.RangeGetTimers(ctx, shardId, request)
@@ -217,7 +229,7 @@ func TestGetTimersUpToTimestamp_EmptyResult(t *testing.T) {
 
 	// Create shard record but no timers
 	ownerAddr := "owner-1"
-	_, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, _, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
 	require.Nil(t, err)
 
 	// Query for timers
@@ -226,7 +238,7 @@ func TestGetTimersUpToTimestamp_EmptyResult(t *testing.T) {
 		StartTimeUuid:  databases.ZeroUUID,
 		EndTimestamp:   time.Now().Add(5 * time.Minute),
 		EndTimeUuid:    databases.MaxUUID,
-		Limit:         10,
+		Limit:          10,
 	}
 
 	response, getErr := store.RangeGetTimers(ctx, shardId, request)
@@ -245,7 +257,11 @@ func TestGetTimersUpToTimestamp_TimeOrdering(t *testing.T) {
 
 	// Create shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 
 	// Create timers in non-sequential order
@@ -292,7 +308,7 @@ func TestGetTimersUpToTimestamp_TimeOrdering(t *testing.T) {
 		StartTimeUuid:  databases.ZeroUUID,
 		EndTimestamp:   baseTime.Add(5 * time.Minute),
 		EndTimeUuid:    databases.MaxUUID,
-		Limit:         10,
+		Limit:          10,
 	}
 
 	response, getErr := store.RangeGetTimers(ctx, shardId, request)

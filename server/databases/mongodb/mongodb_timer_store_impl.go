@@ -94,22 +94,12 @@ func (m *MongoDBTimerStore) Close() error {
 }
 
 func (m *MongoDBTimerStore) ClaimShardOwnership(
-	ctx context.Context, shardId int, ownerAddr string, metadata interface{},
-) (shardVersion int64, retErr *databases.DbError) {
+	ctx context.Context,
+	shardId int,
+	ownerAddr string,
+) (prevShardInfo, currentShardInfo *databases.ShardInfo, err *databases.DbError) {
 	// Convert ZeroUUID to high/low format for shard records
 	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
-
-	// Serialize metadata to JSON
-	var metadataJSON interface{}
-	if metadata != nil {
-		metadataBytes, err := json.Marshal(metadata)
-		if err != nil {
-			return 0, databases.NewGenericDbError("failed to marshal metadata", err)
-		}
-		metadataJSON = string(metadataBytes)
-	} else {
-		metadataJSON = nil
-	}
 
 	now := time.Now().UTC()
 
@@ -124,15 +114,22 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 
 	// First, try to read the current shard record
 	var existingDoc bson.M
-	err := m.collection.FindOne(ctx, filter).Decode(&existingDoc)
+	findErr := m.collection.FindOne(ctx, filter).Decode(&existingDoc)
 
-	if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
-		return 0, databases.NewGenericDbError("failed to read shard record", err)
+	if findErr != nil && !errors.Is(findErr, mongo.ErrNoDocuments) {
+		return nil, nil, databases.NewGenericDbError("failed to read shard record", findErr)
 	}
 
-	if errors.Is(err, mongo.ErrNoDocuments) {
+	if errors.Is(findErr, mongo.ErrNoDocuments) {
 		// Shard doesn't exist, create it with version 1
 		newVersion := int64(1)
+
+		// Initialize with default metadata
+		defaultMetadata := databases.ShardMetadata{}
+		metadataJSON, marshalErr := json.Marshal(defaultMetadata)
+		if marshalErr != nil {
+			return nil, nil, databases.NewGenericDbError("failed to marshal default metadata", marshalErr)
+		}
 
 		shardDoc := bson.M{
 			"shard_id":         shardId,
@@ -143,40 +140,44 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 			"shard_version":    newVersion,
 			"shard_owner_addr": ownerAddr,
 			"shard_claimed_at": now,
-			"shard_metadata":   metadataJSON,
+			"shard_metadata":   string(metadataJSON),
 		}
 
-		_, err = m.collection.InsertOne(ctx, shardDoc)
-		if err != nil {
+		_, insertErr := m.collection.InsertOne(ctx, shardDoc)
+		if insertErr != nil {
 			// Check if it's a duplicate key error (another instance created it concurrently)
-			if isDuplicateKeyError(err) {
+			if isDuplicateKeyError(insertErr) {
 				// Try to read the existing record to return conflict info
 				var conflictDoc bson.M
 				conflictErr := m.collection.FindOne(ctx, filter).Decode(&conflictDoc)
 
 				if conflictErr == nil {
-					conflictInfo := &databases.ShardInfo{
-						ShardId:      int64(shardId),
-						OwnerAddr:    getStringFromBSON(conflictDoc, "shard_owner_addr"),
-						ClaimedAt:    getTimeFromBSON(conflictDoc, "shard_claimed_at"),
-						Metadata:     getStringFromBSON(conflictDoc, "shard_metadata"),
-						ShardVersion: getInt64FromBSON(conflictDoc, "shard_version"),
-					}
-					return 0, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil, conflictInfo)
+					conflictInfo := extractShardInfoFromMongoDoc(conflictDoc, int64(shardId))
+					return nil, nil, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil, conflictInfo)
 				}
 			}
-			return 0, databases.NewGenericDbError("failed to insert new shard record", err)
+			return nil, nil, databases.NewGenericDbError("failed to insert new shard record", insertErr)
 		}
 
-		// Successfully created new record
-		return newVersion, nil
+		// Successfully created new record, return nil for prevShardInfo and current info
+		currentShardInfo = &databases.ShardInfo{
+			ShardId:      int64(shardId),
+			OwnerAddr:    ownerAddr,
+			ShardVersion: newVersion,
+			Metadata:     defaultMetadata,
+			ClaimedAt:    now,
+		}
+		return nil, currentShardInfo, nil
 	}
+
+	// Extract current shard info for prevShardInfo
+	prevShardInfo = extractShardInfoFromMongoDoc(existingDoc, int64(shardId))
 
 	// Extract current version and update with optimistic concurrency control
 	currentVersion := getInt64FromBSON(existingDoc, "shard_version")
 	newVersion := currentVersion + 1
 
-	// Update with version check for optimistic concurrency
+	// Update with version check for optimistic concurrency (preserve existing metadata)
 	updateFilter := bson.M{
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
@@ -191,24 +192,40 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 			"shard_version":    newVersion,
 			"shard_owner_addr": ownerAddr,
 			"shard_claimed_at": now,
-			"shard_metadata":   metadataJSON,
+			// Note: shard_metadata is NOT updated - preserved from existing record
 		},
 	}
 
-	result, err := m.collection.UpdateOne(ctx, updateFilter, update)
-	if err != nil {
-		return 0, databases.NewGenericDbError("failed to update shard record", err)
+	result, updateErr := m.collection.UpdateOne(ctx, updateFilter, update)
+	if updateErr != nil {
+		return nil, nil, databases.NewGenericDbError("failed to update shard record", updateErr)
 	}
 
 	if result.MatchedCount == 0 {
-		// Version changed concurrently, return conflict info
-		conflictInfo := &databases.ShardInfo{
-			ShardVersion: currentVersion, // We know it was at least this version
+		// Version changed concurrently, extract conflict info from a new read
+		var conflictDoc bson.M
+		conflictErr := m.collection.FindOne(ctx, filter).Decode(&conflictDoc)
+		if conflictErr == nil {
+			conflictInfo := extractShardInfoFromMongoDoc(conflictDoc, int64(shardId))
+			return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
 		}
-		return 0, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
+		// Fallback conflict info
+		conflictInfo := &databases.ShardInfo{
+			ShardVersion: currentVersion,
+		}
+		return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
 	}
 
-	return newVersion, nil
+	// Successfully updated, return both previous and current shard info
+	currentShardInfo = &databases.ShardInfo{
+		ShardId:      int64(shardId),
+		OwnerAddr:    ownerAddr,
+		ShardVersion: newVersion,
+		Metadata:     prevShardInfo.Metadata, // Preserve existing metadata
+		ClaimedAt:    now,
+	}
+
+	return prevShardInfo, currentShardInfo, nil
 }
 
 // Helper functions for BSON value extraction
@@ -255,6 +272,29 @@ func isDuplicateKeyError(err error) bool {
 		}
 	}
 	return false
+}
+
+// extractShardInfoFromMongoDoc extracts ShardInfo from MongoDB document
+func extractShardInfoFromMongoDoc(doc bson.M, shardId int64) *databases.ShardInfo {
+	info := &databases.ShardInfo{
+		ShardId: shardId,
+	}
+
+	info.ShardVersion = getInt64FromBSON(doc, "shard_version")
+	info.OwnerAddr = getStringFromBSON(doc, "shard_owner_addr")
+	info.ClaimedAt = getTimeFromBSON(doc, "shard_claimed_at")
+
+	// Parse metadata from JSON string to ShardMetadata struct
+	metadataStr := getStringFromBSON(doc, "shard_metadata")
+	if metadataStr != "" {
+		var shardMetadata databases.ShardMetadata
+		if err := json.Unmarshal([]byte(metadataStr), &shardMetadata); err == nil {
+			info.Metadata = shardMetadata
+		}
+		// If parsing fails, use default metadata (zero values)
+	}
+
+	return info
 }
 
 func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {

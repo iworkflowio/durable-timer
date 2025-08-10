@@ -23,7 +23,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_Basic(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -178,7 +182,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ShardVersionMismatch(t *testin
 	namespace := "test_namespace"
 
 	// First, create a shard record
-	actualShardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	actualShardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 
 	// Create a timer to be deleted
@@ -253,7 +261,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_EmptyDelete(t *testing.T) {
 	namespace := "test_namespace"
 
 	// First, create a shard record
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 
 	// Create a timer outside the delete range
@@ -328,7 +340,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_NoInserts(t *testing.T) {
 	namespace := "test_namespace"
 
 	// First, create a shard record
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 
 	// Create timers to be deleted
@@ -404,7 +420,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ConcurrentOperations(t *testin
 	namespace := "test_namespace"
 
 	// First, create a shard record
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 
 	// Create timers in different time ranges for concurrent operations
@@ -512,7 +532,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ShardVersionChanged(t *testing
 	namespace := "test_namespace"
 
 	// First, create a shard record
-	initialShardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	initialShardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), initialShardVersion)
 
@@ -532,7 +556,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ShardVersionChanged(t *testing
 	require.Nil(t, createErr)
 
 	// Simulate shard ownership change by claiming it again (increments version)
-	newShardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-2", nil)
+	_, newCurrentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-2")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	newShardVersion := newCurrentShardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(2), newShardVersion) // Should be incremented
 
@@ -598,7 +626,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_InvalidPayloadSerialization(t 
 	namespace := "test_namespace"
 
 	// First, create a shard record
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 
 	// Create timer to be deleted
@@ -662,7 +694,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_LargeTimestamp(t *testing.T) {
 	namespace := "test_namespace"
 
 	// First, create a shard record
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 
 	// Create timers spread across a large time range
@@ -761,7 +797,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_InsertInDeleteRange(t *testing
 	namespace := "test_namespace"
 
 	// First, create a shard record
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 
 	// Create timers that will be deleted
