@@ -18,6 +18,12 @@ type (
 			ownerAddr string,
 		) (prevShardInfo, currentShardInfo *ShardInfo, err *DbError)
 
+		UpdateShardMetadata(
+			ctx context.Context,
+			shardId int, shardVersion int64,
+			metadata ShardMetadata,
+		) (err *DbError)
+
 		CreateTimer(
 			ctx context.Context,
 			shardId int, shardVersion int64, namespace string,

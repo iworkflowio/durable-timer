@@ -191,6 +191,47 @@ func extractShardInfoFromCassandraMap(cassandraMap map[string]interface{}, shard
 	return info
 }
 
+func (c *CassandraTimerStore) UpdateShardMetadata(
+	ctx context.Context,
+	shardId int, shardVersion int64,
+	metadata databases.ShardMetadata,
+) (err *databases.DbError) {
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+
+	// Marshal metadata to JSON
+	metadataJSON, marshalErr := json.Marshal(metadata)
+	if marshalErr != nil {
+		return databases.NewGenericDbError("failed to marshal metadata", marshalErr)
+	}
+
+	// Use LWT to update shard metadata only if the shard version matches
+	updateQuery := `UPDATE timers SET shard_metadata = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
+
+	// Create a logged batch for the LWT operation
+	batch := c.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
+	batch.Query(updateQuery, string(metadataJSON), shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
+
+	// When CAS fails, Cassandra returns the existing row values
+	previous := make(map[string]interface{})
+	applied, iter, lwt_err := c.session.MapExecuteBatchCAS(batch, previous)
+	if iter != nil {
+		iter.Close()
+	}
+
+	if lwt_err != nil {
+		return databases.NewGenericDbError("failed to update shard metadata", lwt_err)
+	}
+
+	if !applied {
+		// Extract conflict info from the returned previous values
+		conflictInfo := extractShardInfoFromCassandraMap(previous, int64(shardId))
+		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during metadata update", nil, conflictInfo)
+	}
+
+	return nil
+}
+
 func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
 	// Convert the provided timer UUID to high/low format for predictable pagination
 	timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timer.TimerUuid)
