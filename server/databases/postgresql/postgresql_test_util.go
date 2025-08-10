@@ -47,8 +47,25 @@ func executeSchemaFile(db *sql.DB) error {
 
 	content := string(contentBytes)
 
+	// Process line by line to remove comments first
+	lines := strings.Split(content, "\n")
+	var processedLines []string
+
+	for _, line := range lines {
+		// Remove comments: everything after "--" until end of line
+		if commentIndex := strings.Index(line, "--"); commentIndex != -1 {
+			line = strings.TrimSpace(line[:commentIndex])
+		}
+
+		// Keep the line even if it becomes empty (to preserve structure)
+		processedLines = append(processedLines, line)
+	}
+
+	// Rejoin the processed content
+	processedContent := strings.Join(processedLines, "\n")
+
 	// Split by semicolon to get individual statements
-	statements := strings.Split(content, ";")
+	statements := strings.Split(processedContent, ";")
 
 	for _, stmt := range statements {
 		// Trim whitespace and skip empty statements
@@ -57,25 +74,9 @@ func executeSchemaFile(db *sql.DB) error {
 			continue
 		}
 
-		// Process the statement: remove comments but keep SQL content
-		lines := strings.Split(stmt, "\n")
-		var cleanLines []string
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, "--") {
-				cleanLines = append(cleanLines, line)
-			}
-		}
-
-		if len(cleanLines) == 0 {
-			continue
-		}
-
-		cleanStmt := strings.Join(cleanLines, " ")
-
-		_, err = db.Exec(cleanStmt)
+		_, err = db.Exec(stmt)
 		if err != nil {
-			return fmt.Errorf("failed to execute SQL statement '%s': %w", cleanStmt, err)
+			return fmt.Errorf("failed to execute SQL statement '%s': %w", stmt, err)
 		}
 	}
 

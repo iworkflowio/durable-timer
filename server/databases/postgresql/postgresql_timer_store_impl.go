@@ -189,7 +189,7 @@ func (p *PostgreSQLTimerStore) UpdateShardMetadata(
 
 	// Update shard metadata using optimistic concurrency control
 	updateQuery := `UPDATE timers SET shard_metadata = $1, shard_updated_at = $2
-	                WHERE shard_id = $2 AND row_type = $3 AND timer_execute_at = $4 AND timer_uuid_high = $5 AND timer_uuid_low = $6 AND shard_version = $7`
+	                WHERE shard_id = $3 AND row_type = $4 AND timer_execute_at = $5 AND timer_uuid_high = $6 AND timer_uuid_low = $7 AND shard_version = $8`
 
 	result, updateErr := p.db.ExecContext(ctx, updateQuery,
 		string(metadataJSON), time.Now().UTC(), shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
@@ -220,7 +220,6 @@ func isDuplicateKeyError(err error) bool {
 	// PostgreSQL Error 23505 indicates a unique constraint violation
 	return ok && pqErr.Code == "23505"
 }
-
 
 func (p *PostgreSQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
 	// Convert the provided timer UUID to high/low format for predictable pagination

@@ -45,18 +45,30 @@ func executeSchemaFile(db *sql.DB) error {
 
 	content := string(contentBytes)
 
+	// Process line by line to remove comments first
+	lines := strings.Split(content, "\n")
+	var processedLines []string
+
+	for _, line := range lines {
+		// Remove comments: everything after "--" until end of line
+		if commentIndex := strings.Index(line, "--"); commentIndex != -1 {
+			line = strings.TrimSpace(line[:commentIndex])
+		}
+
+		// Keep the line even if it becomes empty (to preserve structure)
+		processedLines = append(processedLines, line)
+	}
+
+	// Rejoin the processed content
+	processedContent := strings.Join(processedLines, "\n")
+
 	// Split by semicolon to get individual statements
-	statements := strings.Split(content, ";")
+	statements := strings.Split(processedContent, ";")
 
 	for _, stmt := range statements {
 		// Trim whitespace and skip empty statements
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" {
-			continue
-		}
-
-		// Skip comment-only lines
-		if strings.HasPrefix(stmt, "--") {
 			continue
 		}
 
