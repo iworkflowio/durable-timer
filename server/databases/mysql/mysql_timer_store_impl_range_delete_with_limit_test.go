@@ -22,7 +22,9 @@ func TestRangeDeleteWithLimit_Basic(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -82,7 +84,9 @@ func TestRangeDeleteWithLimit_NoLimit(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-2"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -136,7 +140,9 @@ func TestRangeDeleteWithLimit_EmptyRange(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-3"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -281,7 +287,9 @@ func TestRangeDeleteWithLimit_WithPayload(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-6"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -353,7 +361,9 @@ func TestRangeDeleteWithLimit_TimeOrdering(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-7"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -426,7 +436,9 @@ func TestRangeDeleteWithLimit_PreciseRange(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-8"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := currentShardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 

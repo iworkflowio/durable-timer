@@ -57,107 +57,130 @@ func (m *MySQLTimerStore) Close() error {
 }
 
 func (m *MySQLTimerStore) ClaimShardOwnership(
-	ctx context.Context, shardId int, ownerAddr string, metadata interface{},
-) (shardVersion int64, retErr *databases.DbError) {
+	ctx context.Context,
+	shardId int,
+	ownerAddr string,
+) (prevShardInfo, currentShardInfo *databases.ShardInfo, err *databases.DbError) {
 	// Convert ZeroUUID to high/low format for shard records
 	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
-
-	// Serialize metadata to JSON
-	var metadataJSON interface{}
-	if metadata != nil {
-		metadataBytes, err := json.Marshal(metadata)
-		if err != nil {
-			return 0, databases.NewGenericDbError("failed to marshal metadata", err)
-		}
-		metadataJSON = string(metadataBytes)
-	}
 
 	now := time.Now().UTC()
 
 	// First, try to read the current shard record from unified timers table
 	var currentVersion int64
 	var currentOwnerAddr string
-	query := `SELECT shard_version, shard_owner_addr FROM timers 
+	var currentClaimedAt time.Time
+	var currentMetadata string
+	query := `SELECT shard_version, shard_owner_addr, shard_claimed_at, shard_metadata FROM timers 
 	          WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?`
 
-	err := m.db.QueryRowContext(ctx, query, shardId, databases.RowTypeShard,
-		databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&currentVersion, &currentOwnerAddr)
+	readErr := m.db.QueryRowContext(ctx, query, shardId, databases.RowTypeShard,
+		databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&currentVersion, &currentOwnerAddr, &currentClaimedAt, &currentMetadata)
 
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, databases.NewGenericDbError("failed to read shard record", err)
+	if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
+		return nil, nil, databases.NewGenericDbError("failed to read shard record", readErr)
 	}
 
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(readErr, sql.ErrNoRows) {
 		// Shard doesn't exist, create it with version 1
 		newVersion := int64(1)
+
+		// Initialize with default metadata
+		defaultMetadata := databases.ShardMetadata{}
+		metadataJSON, marshalErr := json.Marshal(defaultMetadata)
+		if marshalErr != nil {
+			return nil, nil, databases.NewGenericDbError("failed to marshal default metadata", marshalErr)
+		}
+
 		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, 
 		                                   shard_version, shard_owner_addr, shard_claimed_at, shard_metadata) 
 		                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-		_, err := m.db.ExecContext(ctx, insertQuery,
+		_, insertErr := m.db.ExecContext(ctx, insertQuery,
 			shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow,
-			newVersion, ownerAddr, now, metadataJSON)
+			newVersion, ownerAddr, now, string(metadataJSON))
 
-		if err != nil {
+		if insertErr != nil {
 			// Check if it's a duplicate key error (another instance created it concurrently)
-			if isDuplicateKeyError(err) {
+			if isDuplicateKeyError(insertErr) {
 				// Try to read the existing record to return conflict info
-				var conflictVersion int64
-				var conflictOwnerAddr string
-				var conflictClaimedAt time.Time
-				var conflictMetadata string
-
-				conflictQuery := `SELECT shard_version, shard_owner_addr, shard_claimed_at, shard_metadata 
-				                  FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?`
-
-				conflictErr := m.db.QueryRowContext(ctx, conflictQuery, shardId, databases.RowTypeShard,
-					databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&conflictVersion, &conflictOwnerAddr, &conflictClaimedAt, &conflictMetadata)
-
-				if conflictErr == nil {
-					conflictInfo := &databases.ShardInfo{
-						ShardId:      int64(shardId),
-						OwnerAddr:    conflictOwnerAddr,
-						ClaimedAt:    conflictClaimedAt,
-						Metadata:     conflictMetadata,
-						ShardVersion: conflictVersion,
-					}
-					return 0, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil, conflictInfo)
+				conflictInfo := m.extractShardInfoFromRecord(ctx, shardId)
+				if conflictInfo != nil {
+					return nil, nil, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil, conflictInfo)
 				}
 			}
-			return 0, databases.NewGenericDbError("failed to insert new shard record", err)
+			return nil, nil, databases.NewGenericDbError("failed to insert new shard record", insertErr)
 		}
 
-		// Successfully created new record
-		return newVersion, nil
+		// Successfully created new record, return nil for prevShardInfo and current info
+		currentShardInfo = &databases.ShardInfo{
+			ShardId:      int64(shardId),
+			OwnerAddr:    ownerAddr,
+			ShardVersion: newVersion,
+			Metadata:     defaultMetadata,
+			ClaimedAt:    now,
+		}
+		return nil, currentShardInfo, nil
 	}
 
-	// Update the shard with new version and ownership using optimistic concurrency control
+	// Extract current shard info for prevShardInfo
+	prevShardInfo = &databases.ShardInfo{
+		ShardId:      int64(shardId),
+		OwnerAddr:    currentOwnerAddr,
+		ShardVersion: currentVersion,
+		ClaimedAt:    currentClaimedAt,
+	}
+
+	// Parse metadata from JSON string to ShardMetadata struct
+	if currentMetadata != "" {
+		var shardMetadata databases.ShardMetadata
+		if metadataErr := json.Unmarshal([]byte(currentMetadata), &shardMetadata); metadataErr == nil {
+			prevShardInfo.Metadata = shardMetadata
+		}
+		// If parsing fails, use default metadata (zero values)
+	}
+
+	// Update the shard with new version and ownership using optimistic concurrency control (preserve existing metadata)
 	newVersion := currentVersion + 1
-	updateQuery := `UPDATE timers SET shard_version = ?, shard_owner_addr = ?, shard_claimed_at = ?, shard_metadata = ? 
+	updateQuery := `UPDATE timers SET shard_version = ?, shard_owner_addr = ?, shard_claimed_at = ? 
 	                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? AND shard_version = ?`
 
-	result, err := m.db.ExecContext(ctx, updateQuery,
-		newVersion, ownerAddr, now, metadataJSON,
+	result, updateErr := m.db.ExecContext(ctx, updateQuery,
+		newVersion, ownerAddr, now,
 		shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, currentVersion)
 
-	if err != nil {
-		return 0, databases.NewGenericDbError("failed to update shard record", err)
+	if updateErr != nil {
+		return nil, nil, databases.NewGenericDbError("failed to update shard record", updateErr)
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return 0, databases.NewGenericDbError("failed to get rows affected", err)
+	rowsAffected, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		return nil, nil, databases.NewGenericDbError("failed to get rows affected", rowsErr)
 	}
 
 	if rowsAffected == 0 {
-		// Version changed concurrently, return conflict info
-		conflictInfo := &databases.ShardInfo{
-			ShardVersion: currentVersion, // We know it was at least this version
+		// Version changed concurrently, extract conflict info from a new read
+		conflictInfo := m.extractShardInfoFromRecord(ctx, shardId)
+		if conflictInfo != nil {
+			return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
 		}
-		return 0, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
+		// Fallback conflict info
+		conflictInfo = &databases.ShardInfo{
+			ShardVersion: currentVersion,
+		}
+		return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
 	}
 
-	return newVersion, nil
+	// Successfully updated, return both previous and current shard info
+	currentShardInfo = &databases.ShardInfo{
+		ShardId:      int64(shardId),
+		OwnerAddr:    ownerAddr,
+		ShardVersion: newVersion,
+		Metadata:     prevShardInfo.Metadata, // Preserve existing metadata
+		ClaimedAt:    now,
+	}
+
+	return prevShardInfo, currentShardInfo, nil
 }
 
 // isDuplicateKeyError checks if the error is a MySQL duplicate key error
@@ -167,6 +190,44 @@ func isDuplicateKeyError(err error) bool {
 	// ErrDupEntry MySQL Error 1062 indicates a duplicate primary key i.e. the row already exists,
 	// so we don't do the insert and return a ConditionalUpdate error.
 	return ok && sqlErr.Number == mysqlerr.ER_DUP_ENTRY
+}
+
+// extractShardInfoFromRecord extracts ShardInfo from MySQL record
+func (m *MySQLTimerStore) extractShardInfoFromRecord(ctx context.Context, shardId int) *databases.ShardInfo {
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+
+	var version int64
+	var ownerAddr string
+	var claimedAt time.Time
+	var metadataStr string
+
+	query := `SELECT shard_version, shard_owner_addr, shard_claimed_at, shard_metadata 
+	          FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?`
+
+	err := m.db.QueryRowContext(ctx, query, shardId, databases.RowTypeShard,
+		databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&version, &ownerAddr, &claimedAt, &metadataStr)
+
+	if err != nil {
+		return nil
+	}
+
+	info := &databases.ShardInfo{
+		ShardId:      int64(shardId),
+		OwnerAddr:    ownerAddr,
+		ShardVersion: version,
+		ClaimedAt:    claimedAt,
+	}
+
+	// Parse metadata from JSON string to ShardMetadata struct
+	if metadataStr != "" {
+		var shardMetadata databases.ShardMetadata
+		if metadataErr := json.Unmarshal([]byte(metadataStr), &shardMetadata); metadataErr == nil {
+			info.Metadata = shardMetadata
+		}
+		// If parsing fails, use default metadata (zero values)
+	}
+
+	return info
 }
 
 func (m *MySQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
