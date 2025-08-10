@@ -829,10 +829,7 @@ func (c *MySQLTimerStore) DeleteTimer(ctx context.Context, shardId int, shardVer
 	if shardErr != nil {
 		if errors.Is(shardErr, sql.ErrNoRows) {
 			// Shard doesn't exist
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: 0,
-			}
-			return databases.NewDbErrorOnShardConditionFail("shard not found during timer delete", nil, conflictInfo)
+			return databases.NewDbErrorOnShardConditionFail("shard not found during timer delete", nil)
 		}
 		return databases.NewGenericDbError("failed to read shard", shardErr)
 	}
