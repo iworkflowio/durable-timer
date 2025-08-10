@@ -188,11 +188,11 @@ func (p *PostgreSQLTimerStore) UpdateShardMetadata(
 	}
 
 	// Update shard metadata using optimistic concurrency control
-	updateQuery := `UPDATE timers SET shard_metadata = $1 
+	updateQuery := `UPDATE timers SET shard_metadata = $1, shard_updated_at = $2
 	                WHERE shard_id = $2 AND row_type = $3 AND timer_execute_at = $4 AND timer_uuid_high = $5 AND timer_uuid_low = $6 AND shard_version = $7`
 
 	result, updateErr := p.db.ExecContext(ctx, updateQuery,
-		string(metadataJSON), shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
+		string(metadataJSON), time.Now().UTC(), shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
 
 	if updateErr != nil {
 		return databases.NewGenericDbError("failed to update shard metadata", updateErr)
@@ -221,43 +221,6 @@ func isDuplicateKeyError(err error) bool {
 	return ok && pqErr.Code == "23505"
 }
 
-// extractShardInfoFromRecord extracts ShardInfo from PostgreSQL record
-func (p *PostgreSQLTimerStore) extractShardInfoFromRecord(ctx context.Context, shardId int) *databases.ShardInfo {
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
-
-	var version int64
-	var ownerAddr string
-	var claimedAt time.Time
-	var metadataStr string
-
-	query := `SELECT shard_version, shard_owner_addr, shard_claimed_at, shard_metadata 
-	          FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5`
-
-	err := p.db.QueryRowContext(ctx, query, shardId, databases.RowTypeShard,
-		databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&version, &ownerAddr, &claimedAt, &metadataStr)
-
-	if err != nil {
-		return nil
-	}
-
-	info := &databases.ShardInfo{
-		ShardId:      int64(shardId),
-		OwnerAddr:    ownerAddr,
-		ShardVersion: version,
-		ClaimedAt:    claimedAt,
-	}
-
-	// Parse metadata from JSON string to ShardMetadata struct
-	if metadataStr != "" {
-		var shardMetadata databases.ShardMetadata
-		if metadataErr := json.Unmarshal([]byte(metadataStr), &shardMetadata); metadataErr == nil {
-			info.Metadata = shardMetadata
-		}
-		// If parsing fails, use default metadata (zero values)
-	}
-
-	return info
-}
 
 func (p *PostgreSQLTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
 	// Convert the provided timer UUID to high/low format for predictable pagination

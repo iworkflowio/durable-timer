@@ -153,42 +153,6 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	return prevShardInfo, currentShardInfo, nil
 }
 
-// extractShardInfoFromCassandraMap extracts ShardInfo from Cassandra CAS result map
-func extractShardInfoFromCassandraMap(cassandraMap map[string]interface{}, shardId int64) *databases.ShardInfo {
-	info := &databases.ShardInfo{
-		ShardId: shardId,
-	}
-
-	if version, exists := cassandraMap["shard_version"]; exists && version != nil {
-		if v, ok := version.(int64); ok {
-			info.ShardVersion = v
-		}
-	}
-
-	if owner, exists := cassandraMap["shard_owner_addr"]; exists && owner != nil {
-		if o, ok := owner.(string); ok {
-			info.OwnerAddr = o
-		}
-	}
-
-	if claimedAt, exists := cassandraMap["shard_claimed_at"]; exists && claimedAt != nil {
-		if c, ok := claimedAt.(time.Time); ok {
-			info.ClaimedAt = c
-		}
-	}
-
-	if metadata, exists := cassandraMap["shard_metadata"]; exists && metadata != nil {
-		if m, ok := metadata.(string); ok && m != "" {
-			var shardMetadata databases.ShardMetadata
-			if err := json.Unmarshal([]byte(m), &shardMetadata); err == nil {
-				info.Metadata = shardMetadata
-			}
-		}
-	}
-
-	return info
-}
-
 func (c *CassandraTimerStore) UpdateShardMetadata(
 	ctx context.Context,
 	shardId int, shardVersion int64,

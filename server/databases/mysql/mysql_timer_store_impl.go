@@ -182,44 +182,6 @@ func isDuplicateKeyError(err error) bool {
 	return ok && sqlErr.Number == mysqlerr.ER_DUP_ENTRY
 }
 
-// extractShardInfoFromRecord extracts ShardInfo from MySQL record
-func (m *MySQLTimerStore) extractShardInfoFromRecord(ctx context.Context, shardId int) *databases.ShardInfo {
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
-
-	var version int64
-	var ownerAddr string
-	var claimedAt time.Time
-	var metadataStr string
-
-	query := `SELECT shard_version, shard_owner_addr, shard_claimed_at, shard_metadata 
-	          FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ?`
-
-	err := m.db.QueryRowContext(ctx, query, shardId, databases.RowTypeShard,
-		databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&version, &ownerAddr, &claimedAt, &metadataStr)
-
-	if err != nil {
-		return nil
-	}
-
-	info := &databases.ShardInfo{
-		ShardId:      int64(shardId),
-		OwnerAddr:    ownerAddr,
-		ShardVersion: version,
-		ClaimedAt:    claimedAt,
-	}
-
-	// Parse metadata from JSON string to ShardMetadata struct
-	if metadataStr != "" {
-		var shardMetadata databases.ShardMetadata
-		if metadataErr := json.Unmarshal([]byte(metadataStr), &shardMetadata); metadataErr == nil {
-			info.Metadata = shardMetadata
-		}
-		// If parsing fails, use default metadata (zero values)
-	}
-
-	return info
-}
-
 func (m *MySQLTimerStore) UpdateShardMetadata(
 	ctx context.Context,
 	shardId int, shardVersion int64,
@@ -235,10 +197,10 @@ func (m *MySQLTimerStore) UpdateShardMetadata(
 	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
 
 	// Use conditional update to update shard metadata only if the shard version matches
-	updateQuery := `UPDATE timers SET shard_metadata = ? 
+	updateQuery := `UPDATE timers SET shard_metadata = ?, shard_updated_at = ?
 	                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? AND shard_version = ?`
 
-	result, updateErr := m.db.ExecContext(ctx, updateQuery, string(metadataJSON), shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
+	result, updateErr := m.db.ExecContext(ctx, updateQuery, string(metadataJSON), time.Now().UTC(), shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
 	if updateErr != nil {
 		return databases.NewGenericDbError("failed to update shard metadata", updateErr)
 	}

@@ -13,6 +13,7 @@ CREATE TABLE timers (
     shard_version BIGINT,
     shard_owner_addr VARCHAR(255),
     shard_claimed_at TIMESTAMP(3),
+    shard_updated_at TIMESTAMP(3), -- for enforcing optimistic locking(because postgresql doesn't distinguish between changes and matches)
     shard_metadata JSONB,
     timer_created_at TIMESTAMP(3) NOT NULL DEFAULT NOW(),
     timer_attempts INTEGER NOT NULL DEFAULT 0,
