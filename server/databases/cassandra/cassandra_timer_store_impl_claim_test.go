@@ -72,11 +72,11 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 	assert.Nil(t, err2)
 	require.NotNil(t, prev2, "Should have previous shard info")
 	require.NotNil(t, curr2, "Should have current shard info")
-	
+
 	// Check previous shard info
 	assert.Equal(t, int64(1), prev2.ShardVersion)
 	assert.Equal(t, "owner-1", prev2.OwnerAddr)
-	
+
 	// Check current shard info
 	assert.Equal(t, int64(2), curr2.ShardVersion)
 	assert.Equal(t, "owner-2", curr2.OwnerAddr)
@@ -86,11 +86,11 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 	assert.Nil(t, err3)
 	require.NotNil(t, prev3)
 	require.NotNil(t, curr3)
-	
+
 	// Check previous shard info
 	assert.Equal(t, int64(2), prev3.ShardVersion)
 	assert.Equal(t, "owner-2", prev3.OwnerAddr)
-	
+
 	// Check current shard info
 	assert.Equal(t, int64(3), curr3.ShardVersion)
 	assert.Equal(t, "owner-1", curr3.OwnerAddr)

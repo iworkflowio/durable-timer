@@ -80,19 +80,10 @@ func (d *DynamoDBTimerStore) Close() error {
 }
 
 func (d *DynamoDBTimerStore) ClaimShardOwnership(
-	ctx context.Context, shardId int, ownerAddr string, metadata interface{},
-) (shardVersion int64, retErr *databases.DbError) {
-	// Serialize metadata to JSON
-	var metadataJSON *string
-	if metadata != nil {
-		metadataBytes, err := json.Marshal(metadata)
-		if err != nil {
-			return 0, databases.NewGenericDbError("failed to marshal metadata", err)
-		}
-		metadataStr := string(metadataBytes)
-		metadataJSON = &metadataStr
-	}
-
+	ctx context.Context,
+	shardId int,
+	ownerAddr string,
+) (prevShardInfo, currentShardInfo *databases.ShardInfo, err *databases.DbError) {
 	now := time.Now().UTC()
 
 	// DynamoDB item key for shard record
@@ -107,14 +98,21 @@ func (d *DynamoDBTimerStore) ClaimShardOwnership(
 		Key:       key,
 	}
 
-	result, err := d.client.GetItem(ctx, getItemInput)
-	if err != nil {
-		return 0, databases.NewGenericDbError("failed to read shard record", err)
+	result, getErr := d.client.GetItem(ctx, getItemInput)
+	if getErr != nil {
+		return nil, nil, databases.NewGenericDbError("failed to read shard record", getErr)
 	}
 
 	if result.Item == nil {
 		// Shard doesn't exist, create it with version 1
 		newVersion := int64(1)
+
+		// Initialize with default metadata
+		defaultMetadata := databases.ShardMetadata{}
+		metadataJSON, marshalErr := json.Marshal(defaultMetadata)
+		if marshalErr != nil {
+			return nil, nil, databases.NewGenericDbError("failed to marshal default metadata", marshalErr)
+		}
 
 		// Create composite execute_at_with_uuid field for shard records (using zero values)
 		shardExecuteAtWithUuid := databases.FormatExecuteAtWithUuid(databases.ZeroTimestamp, databases.ZeroUUIDString)
@@ -127,10 +125,7 @@ func (d *DynamoDBTimerStore) ClaimShardOwnership(
 			"shard_version":              &types.AttributeValueMemberN{Value: strconv.FormatInt(newVersion, 10)},
 			"shard_owner_addr":           &types.AttributeValueMemberS{Value: ownerAddr},
 			"shard_claimed_at":           &types.AttributeValueMemberS{Value: now.Format(time.RFC3339Nano)},
-		}
-
-		if metadataJSON != nil {
-			item["shard_metadata"] = &types.AttributeValueMemberS{Value: *metadataJSON}
+			"shard_metadata":             &types.AttributeValueMemberS{Value: string(metadataJSON)},
 		}
 
 		putItemInput := &dynamodb.PutItemInput{
@@ -139,44 +134,49 @@ func (d *DynamoDBTimerStore) ClaimShardOwnership(
 			ConditionExpression: aws.String("attribute_not_exists(shard_id)"),
 		}
 
-		_, err = d.client.PutItem(ctx, putItemInput)
-		if err != nil {
+		_, putErr := d.client.PutItem(ctx, putItemInput)
+		if putErr != nil {
 			// Check if it's a conditional check failed error (another instance created it concurrently)
-			if isConditionalCheckFailedException(err) {
+			if isConditionalCheckFailedException(putErr) {
 				// Try to read the existing record to return conflict info
 				conflictResult, conflictErr := d.client.GetItem(ctx, getItemInput)
 				if conflictErr == nil && conflictResult.Item != nil {
 					conflictInfo := extractShardInfoFromItem(conflictResult.Item, int64(shardId))
-					return 0, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil, conflictInfo)
+					return nil, nil, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil, conflictInfo)
 				}
 			}
-			return 0, databases.NewGenericDbError("failed to insert new shard record", err)
+			return nil, nil, databases.NewGenericDbError("failed to insert new shard record", putErr)
 		}
 
-		// Successfully created new record
-		return newVersion, nil
+		// Successfully created new record, return nil for prevShardInfo and current info
+		currentShardInfo = &databases.ShardInfo{
+			ShardId:      int64(shardId),
+			OwnerAddr:    ownerAddr,
+			ShardVersion: newVersion,
+			Metadata:     defaultMetadata,
+			ClaimedAt:    now,
+		}
+		return nil, currentShardInfo, nil
 	}
 
+	// Extract current shard info for prevShardInfo
+	prevShardInfo = extractShardInfoFromItem(result.Item, int64(shardId))
+
 	// Extract current version and update with optimistic concurrency control
-	currentVersion, err := extractShardVersionFromItem(result.Item)
-	if err != nil {
-		return 0, databases.NewGenericDbError("failed to parse current shard version", err)
+	currentVersion, versionErr := extractShardVersionFromItem(result.Item)
+	if versionErr != nil {
+		return nil, nil, databases.NewGenericDbError("failed to parse current shard version", versionErr)
 	}
 
 	newVersion := currentVersion + 1
 
-	// Update with version check for optimistic concurrency
+	// Update with version check for optimistic concurrency (preserve existing metadata)
 	updateExpr := "SET shard_version = :new_version, shard_owner_addr = :owner_addr, shard_claimed_at = :claimed_at"
 	exprAttrValues := map[string]types.AttributeValue{
 		":new_version":     &types.AttributeValueMemberN{Value: strconv.FormatInt(newVersion, 10)},
 		":owner_addr":      &types.AttributeValueMemberS{Value: ownerAddr},
 		":claimed_at":      &types.AttributeValueMemberS{Value: now.Format(time.RFC3339Nano)},
 		":current_version": &types.AttributeValueMemberN{Value: strconv.FormatInt(currentVersion, 10)},
-	}
-
-	if metadataJSON != nil {
-		updateExpr += ", shard_metadata = :metadata"
-		exprAttrValues[":metadata"] = &types.AttributeValueMemberS{Value: *metadataJSON}
 	}
 
 	updateItemInput := &dynamodb.UpdateItemInput{
@@ -187,19 +187,34 @@ func (d *DynamoDBTimerStore) ClaimShardOwnership(
 		ExpressionAttributeValues: exprAttrValues,
 	}
 
-	_, err = d.client.UpdateItem(ctx, updateItemInput)
-	if err != nil {
-		if isConditionalCheckFailedException(err) {
-			// Version changed concurrently, return conflict info
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: currentVersion, // We know it was at least this version
+	_, updateErr := d.client.UpdateItem(ctx, updateItemInput)
+	if updateErr != nil {
+		if isConditionalCheckFailedException(updateErr) {
+			// Version changed concurrently, extract conflict info from a new read
+			conflictResult, conflictErr := d.client.GetItem(ctx, getItemInput)
+			if conflictErr == nil && conflictResult.Item != nil {
+				conflictInfo := extractShardInfoFromItem(conflictResult.Item, int64(shardId))
+				return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
 			}
-			return 0, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
+			// Fallback conflict info
+			conflictInfo := &databases.ShardInfo{
+				ShardVersion: currentVersion,
+			}
+			return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
 		}
-		return 0, databases.NewGenericDbError("failed to update shard record", err)
+		return nil, nil, databases.NewGenericDbError("failed to update shard record", updateErr)
 	}
 
-	return newVersion, nil
+	// Successfully updated, return both previous and current shard info
+	currentShardInfo = &databases.ShardInfo{
+		ShardId:      int64(shardId),
+		OwnerAddr:    ownerAddr,
+		ShardVersion: newVersion,
+		Metadata:     prevShardInfo.Metadata, // Preserve existing metadata
+		ClaimedAt:    now,
+	}
+
+	return prevShardInfo, currentShardInfo, nil
 }
 
 // Helper functions for DynamoDB operations
@@ -250,8 +265,12 @@ func extractShardInfoFromItem(item map[string]types.AttributeValue, shardId int6
 	}
 
 	if metadataAttr, exists := item["shard_metadata"]; exists {
-		if metadataStr, ok := metadataAttr.(*types.AttributeValueMemberS); ok {
-			info.Metadata = metadataStr.Value
+		if metadataStr, ok := metadataAttr.(*types.AttributeValueMemberS); ok && metadataStr.Value != "" {
+			var shardMetadata databases.ShardMetadata
+			if err := json.Unmarshal([]byte(metadataStr.Value), &shardMetadata); err == nil {
+				info.Metadata = shardMetadata
+			}
+			// If parsing fails, use default metadata (zero values)
 		}
 	}
 

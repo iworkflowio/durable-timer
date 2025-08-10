@@ -27,16 +27,16 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 	ctx := context.Background()
 	shardId := 1
 	ownerAddr := "owner-1"
-	metadata := map[string]interface{}{
-		"instanceId": "instance-1",
-		"region":     "us-west-2",
-	}
 
 	// Claim ownership of a new shard
-	version, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, metadata)
+	prevShardInfo, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
 
 	assert.Nil(t, err)
-	assert.Equal(t, int64(1), version, "New shard should start with version 1")
+	assert.Nil(t, prevShardInfo, "prevShardInfo should be nil for new shard")
+	assert.NotNil(t, currentShardInfo, "currentShardInfo should not be nil")
+	assert.Equal(t, int64(1), currentShardInfo.ShardVersion, "New shard should start with version 1")
+	assert.Equal(t, int64(shardId), currentShardInfo.ShardId)
+	assert.Equal(t, ownerAddr, currentShardInfo.OwnerAddr)
 
 	// Verify the record was created correctly
 	key := map[string]types.AttributeValue{
@@ -60,9 +60,13 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 
 	shardInfo := extractShardInfoFromItem(result.Item, int64(shardId))
 	assert.Equal(t, ownerAddr, shardInfo.OwnerAddr)
-	assert.Contains(t, shardInfo.Metadata, "instance-1")
-	assert.Contains(t, shardInfo.Metadata, "us-west-2")
+	// For new shard, metadata should be default (empty)
+	assert.Equal(t, databases.ShardMetadata{}, shardInfo.Metadata)
 	assert.True(t, time.Since(shardInfo.ClaimedAt) < 5*time.Second, "claimed_at should be recent")
+	// Verify currentShardInfo matches what's in the database
+	assert.Equal(t, shardInfo.ShardVersion, currentShardInfo.ShardVersion)
+	assert.Equal(t, shardInfo.OwnerAddr, currentShardInfo.OwnerAddr)
+	assert.True(t, time.Since(currentShardInfo.ClaimedAt) < 5*time.Second, "currentShardInfo claimed_at should be recent")
 }
 
 func TestClaimShardOwnership_ExistingShard(t *testing.T) {
@@ -73,19 +77,32 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 	shardId := 2
 
 	// First claim
-	version1, err1 := store.ClaimShardOwnership(ctx, shardId, "owner-1", map[string]string{"key": "value1"})
+	prev1, current1, err1 := store.ClaimShardOwnership(ctx, shardId, "owner-1")
 	assert.Nil(t, err1)
-	assert.Equal(t, int64(1), version1)
+	assert.Nil(t, prev1, "prevShardInfo should be nil for new shard")
+	assert.NotNil(t, current1)
+	assert.Equal(t, int64(1), current1.ShardVersion)
+	assert.Equal(t, "owner-1", current1.OwnerAddr)
 
 	// Second claim by different owner
-	version2, err2 := store.ClaimShardOwnership(ctx, shardId, "owner-2", map[string]string{"key": "value2"})
+	prev2, current2, err2 := store.ClaimShardOwnership(ctx, shardId, "owner-2")
 	assert.Nil(t, err2)
-	assert.Equal(t, int64(2), version2)
+	assert.NotNil(t, prev2, "prevShardInfo should not be nil for existing shard")
+	assert.NotNil(t, current2)
+	assert.Equal(t, int64(1), prev2.ShardVersion)
+	assert.Equal(t, "owner-1", prev2.OwnerAddr)
+	assert.Equal(t, int64(2), current2.ShardVersion)
+	assert.Equal(t, "owner-2", current2.OwnerAddr)
 
 	// Third claim by original owner
-	version3, err3 := store.ClaimShardOwnership(ctx, shardId, "owner-1", map[string]string{"key": "value3"})
+	prev3, current3, err3 := store.ClaimShardOwnership(ctx, shardId, "owner-1")
 	assert.Nil(t, err3)
-	assert.Equal(t, int64(3), version3)
+	assert.NotNil(t, prev3)
+	assert.NotNil(t, current3)
+	assert.Equal(t, int64(2), prev3.ShardVersion)
+	assert.Equal(t, "owner-2", prev3.OwnerAddr)
+	assert.Equal(t, int64(3), current3.ShardVersion)
+	assert.Equal(t, "owner-1", current3.OwnerAddr)
 
 	// Verify final state
 	key := map[string]types.AttributeValue{
@@ -134,8 +151,12 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 				// sleep for 100 ms to run into the update case
 				time.Sleep(100 * time.Millisecond)
 			}
-			ownerAddr := fmt.Sprintf("owner-%d", idx)
-			version, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, map[string]int{"attempt": idx})
+							ownerAddr := fmt.Sprintf("owner-%d", idx)
+			_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+			var version int64
+			if currentShardInfo != nil {
+				version = currentShardInfo.ShardVersion
+			}
 			results[idx] = struct {
 				version int64
 				err     *databases.DbError
@@ -194,21 +215,23 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 	assert.Equal(t, lastSuccessfulOwner, shardInfo.OwnerAddr, "Database owner should match last successful claimer")
 }
 
-func TestClaimShardOwnership_NilMetadata(t *testing.T) {
+func TestClaimShardOwnership_DefaultMetadata(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	shardId := 4
-	ownerAddr := "owner-nil-metadata"
+	ownerAddr := "owner-default-metadata"
 
-	// Claim with nil metadata
-	version, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	// Claim shard - metadata will be initialized to default
+	prevShardInfo, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
 
 	assert.Nil(t, err)
-	assert.Equal(t, int64(1), version)
+	assert.Nil(t, prevShardInfo)
+	assert.NotNil(t, currentShardInfo)
+	assert.Equal(t, int64(1), currentShardInfo.ShardVersion)
 
-	// Verify metadata is not present in DynamoDB item
+	// Verify metadata is initialized to default
 	key := map[string]types.AttributeValue{
 		"shard_id": &types.AttributeValueMemberN{Value: "4"},
 		"sort_key": &types.AttributeValueMemberS{Value: shardSortKey},
@@ -223,12 +246,13 @@ func TestClaimShardOwnership_NilMetadata(t *testing.T) {
 	require.NoError(t, getErr)
 	require.NotNil(t, result.Item)
 
-	// shard_metadata attribute should not exist
-	_, exists := result.Item["shard_metadata"]
-	assert.False(t, exists, "shard_metadata should not exist when nil")
+	// shard_metadata should exist and be default value
+	shardInfo := extractShardInfoFromItem(result.Item, int64(shardId))
+	assert.Equal(t, databases.ShardMetadata{}, shardInfo.Metadata)
+	assert.Equal(t, databases.ShardMetadata{}, currentShardInfo.Metadata)
 }
 
-func TestClaimShardOwnership_ComplexMetadata(t *testing.T) {
+func TestClaimShardOwnership_MetadataPreservation(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	if store == nil {
 		return
@@ -237,27 +261,31 @@ func TestClaimShardOwnership_ComplexMetadata(t *testing.T) {
 
 	ctx := context.Background()
 	shardId := 5
-	ownerAddr := "owner-complex"
+	ownerAddr1 := "owner-1"
+	ownerAddr2 := "owner-2"
 
-	complexMetadata := map[string]interface{}{
-		"instanceId": "i-1234567890abcdef0",
-		"region":     "us-west-2",
-		"zone":       "us-west-2a",
-		"config": map[string]interface{}{
-			"maxConnections": 100,
-			"timeout":        30.5,
-			"enabled":        true,
-		},
-		"tags": []string{"production", "timer-service"},
-	}
+	// First claim with default metadata
+	prev1, current1, err1 := store.ClaimShardOwnership(ctx, shardId, ownerAddr1)
+	assert.Nil(t, err1)
+	assert.Nil(t, prev1)
+	assert.NotNil(t, current1)
+	assert.Equal(t, int64(1), current1.ShardVersion)
 
-	// Claim with complex metadata
-	version, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, complexMetadata)
+	// Second claim should preserve the metadata from first claim
+	prev2, current2, err2 := store.ClaimShardOwnership(ctx, shardId, ownerAddr2)
+	assert.Nil(t, err2)
+	assert.NotNil(t, prev2)
+	assert.NotNil(t, current2)
+	assert.Equal(t, int64(1), prev2.ShardVersion)
+	assert.Equal(t, ownerAddr1, prev2.OwnerAddr)
+	assert.Equal(t, int64(2), current2.ShardVersion)
+	assert.Equal(t, ownerAddr2, current2.OwnerAddr)
 
-	assert.Nil(t, err)
-	assert.Equal(t, int64(1), version)
+	// Metadata should be preserved across claims
+	assert.Equal(t, databases.ShardMetadata{}, prev2.Metadata, "Previous metadata should be default")
+	assert.Equal(t, databases.ShardMetadata{}, current2.Metadata, "Current metadata should be preserved from previous claim")
 
-	// Verify metadata is properly serialized
+	// Verify database state
 	key := map[string]types.AttributeValue{
 		"shard_id": &types.AttributeValueMemberN{Value: "5"},
 		"sort_key": &types.AttributeValueMemberS{Value: shardSortKey},
@@ -273,8 +301,5 @@ func TestClaimShardOwnership_ComplexMetadata(t *testing.T) {
 	require.NotNil(t, result.Item)
 
 	shardInfo := extractShardInfoFromItem(result.Item, int64(shardId))
-	assert.Contains(t, shardInfo.Metadata, "i-1234567890abcdef0")
-	assert.Contains(t, shardInfo.Metadata, "us-west-2")
-	assert.Contains(t, shardInfo.Metadata, "maxConnections")
-	assert.Contains(t, shardInfo.Metadata, "production")
+	assert.Equal(t, databases.ShardMetadata{}, shardInfo.Metadata, "Database metadata should remain default")
 }
