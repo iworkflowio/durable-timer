@@ -20,7 +20,9 @@ func TestGetTimer_Success(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -76,7 +78,9 @@ func TestGetTimer_NotFound(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -98,7 +102,9 @@ func TestGetTimer_NilPayloadAndRetryPolicy(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -141,7 +147,9 @@ func TestDeleteTimer_Success(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -187,7 +195,9 @@ func TestDeleteTimer_NotExists(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -207,7 +217,9 @@ func TestDeleteTimer_ShardVersionMismatch(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -250,7 +262,9 @@ func TestUpdateTimer_InPlaceUpdate(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -324,7 +338,9 @@ func TestUpdateTimer_ExecutionTimeChange(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -396,7 +412,9 @@ func TestUpdateTimer_NotExists(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -424,7 +442,9 @@ func TestUpdateTimer_ShardVersionMismatch(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -476,7 +496,9 @@ func TestUpdateTimer_NilToNonNilFields(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -533,7 +555,9 @@ func TestUpdateTimer_NonNilToNilFields(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -590,7 +614,9 @@ func TestCreateTimerAttemptsPreservation(t *testing.T) {
 
 	// Create shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 
 	now := time.Now().UTC().Truncate(time.Millisecond)

@@ -22,7 +22,9 @@ func TestCreateTimer_Basic(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 
@@ -77,7 +79,9 @@ func TestCreateTimer_WithPayload(t *testing.T) {
 	namespace := "test_namespace"
 
 	// First claim the shard
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 
 	// Create timer with complex payload
@@ -123,7 +127,9 @@ func TestCreateTimer_WithRetryPolicy(t *testing.T) {
 	namespace := "test_namespace"
 
 	// First claim the shard
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 
 	// Create timer with retry policy
@@ -168,7 +174,9 @@ func TestCreateTimer_ShardVersionMismatch(t *testing.T) {
 	namespace := "test_namespace"
 
 	// First claim the shard
-	actualShardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
+	_, actualShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
+	require.Nil(t, err)
+	actualShardVersion := actualShardInfo.ShardVersion
 	require.Nil(t, err)
 
 	timer := &databases.DbTimer{
@@ -208,7 +216,9 @@ func TestCreateTimer_ConcurrentCreation(t *testing.T) {
 	namespace := "test_namespace"
 
 	// First claim the shard
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, "owner-1", nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 
 	numGoroutines := 10 // Back to original count
@@ -522,7 +532,9 @@ func TestCreateTimer_DuplicateTimerOverwrite(t *testing.T) {
 
 	// Create shard record
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 
 	// 1. Create original timer

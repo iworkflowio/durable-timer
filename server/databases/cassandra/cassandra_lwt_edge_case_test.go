@@ -24,7 +24,9 @@ func TestCassandraLWTBatchEdgeCase(t *testing.T) {
 
 	// Step 1: Create a shard record first
 	ownerAddr := "owner-1"
-	shardVersion, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, shardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := shardInfo.ShardVersion
 	require.Nil(t, err)
 	require.Equal(t, int64(1), shardVersion)
 

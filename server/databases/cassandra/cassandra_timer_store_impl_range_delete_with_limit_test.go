@@ -21,7 +21,7 @@ func TestRangeDeleteWithLimit_Basic(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	_, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, _, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
 	require.Nil(t, err)
 
 	// Create 5 timers to test limit functionality
@@ -78,7 +78,7 @@ func TestRangeDeleteWithLimit_NoLimit(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	_, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, _, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
 	require.Nil(t, err)
 
 	// Create 3 timers
@@ -131,7 +131,7 @@ func TestRangeDeleteWithLimit_EmptyRange(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	_, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, _, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
 	require.Nil(t, err)
 
 	// Create a timer outside the delete range
@@ -181,7 +181,7 @@ func TestRangeDeleteWithLimit_ExactLimit(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	_, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, _, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
 	require.Nil(t, err)
 
 	// Create exactly 3 timers
@@ -234,7 +234,7 @@ func TestRangeDeleteWithLimit_LimitExceedsAvailable(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	_, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, _, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
 	require.Nil(t, err)
 
 	// Create only 2 timers
@@ -287,7 +287,7 @@ func TestRangeDeleteWithLimit_WithPayload(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	_, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, _, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
 	require.Nil(t, err)
 
 	// Create timers with different payloads
@@ -343,7 +343,7 @@ func TestRangeDeleteWithLimit_TimeOrdering(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	_, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, _, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
 	require.Nil(t, err)
 
 	// Create timers with non-sequential creation (to test ordering by ExecuteAt)
@@ -401,7 +401,7 @@ func TestRangeDeleteWithLimit_PreciseRange(t *testing.T) {
 
 	// First, create a shard record
 	ownerAddr := "owner-1"
-	_, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr, nil)
+	_, _, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
 	require.Nil(t, err)
 
 	// Create timers at precise times
