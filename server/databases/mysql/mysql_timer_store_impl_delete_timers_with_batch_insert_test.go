@@ -216,7 +216,6 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ShardVersionMismatch(t *testin
 	// Should fail with shard condition error
 	assert.NotNil(t, deleteErr)
 	assert.True(t, deleteErr.ShardConditionFail)
-	assert.Equal(t, actualShardVersion, deleteErr.ConflictShardVersion)
 
 	// Verify original timer still exists (operation was rolled back)
 	var countOriginal int
@@ -654,8 +653,6 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ShardVersionChanged(t *testing
 	_, deleteErr := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, initialShardVersion, deleteRequest, timersToInsert)
 	assert.NotNil(t, deleteErr)
 	assert.True(t, deleteErr.ShardConditionFail)
-	// MySQL reads and returns the actual conflicting version
-	assert.Equal(t, newShardVersion, deleteErr.ConflictShardVersion)
 
 	// Try to execute with new shard version (should succeed)
 	response, deleteErr2 := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, newShardVersion, deleteRequest, timersToInsert)

@@ -138,12 +138,7 @@ func (d *DynamoDBTimerStore) ClaimShardOwnership(
 		if putErr != nil {
 			// Check if it's a conditional check failed error (another instance created it concurrently)
 			if isConditionalCheckFailedException(putErr) {
-				// Try to read the existing record to return conflict info
-				conflictResult, conflictErr := d.client.GetItem(ctx, getItemInput)
-				if conflictErr == nil && conflictResult.Item != nil {
-					conflictInfo := extractShardInfoFromItem(conflictResult.Item, int64(shardId))
-					return nil, nil, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil, conflictInfo)
-				}
+				return nil, nil, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", putErr)
 			}
 			return nil, nil, databases.NewGenericDbError("failed to insert new shard record", putErr)
 		}
@@ -190,17 +185,8 @@ func (d *DynamoDBTimerStore) ClaimShardOwnership(
 	_, updateErr := d.client.UpdateItem(ctx, updateItemInput)
 	if updateErr != nil {
 		if isConditionalCheckFailedException(updateErr) {
-			// Version changed concurrently, extract conflict info from a new read
-			conflictResult, conflictErr := d.client.GetItem(ctx, getItemInput)
-			if conflictErr == nil && conflictResult.Item != nil {
-				conflictInfo := extractShardInfoFromItem(conflictResult.Item, int64(shardId))
-				return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
-			}
-			// Fallback conflict info
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: currentVersion,
-			}
-			return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
+			// Don't read conflict info to avoid expensive extra query
+			return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil)
 		}
 		return nil, nil, databases.NewGenericDbError("failed to update shard record", updateErr)
 	}
@@ -285,6 +271,47 @@ func isConditionalCheckFailedException(err error) bool {
 			apiErr.ErrorCode() == "TransactionCanceledException"
 	}
 	return false
+}
+
+func (d *DynamoDBTimerStore) UpdateShardMetadata(
+	ctx context.Context,
+	shardId int, shardVersion int64,
+	metadata databases.ShardMetadata,
+) (err *databases.DbError) {
+	// Marshal metadata to JSON
+	metadataJSON, marshalErr := json.Marshal(metadata)
+	if marshalErr != nil {
+		return databases.NewGenericDbError("failed to marshal metadata", marshalErr)
+	}
+
+	// DynamoDB item key for shard record
+	key := map[string]types.AttributeValue{
+		"shard_id": &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+		"sort_key": &types.AttributeValueMemberS{Value: shardSortKey},
+	}
+
+	// Use conditional update to update shard metadata only if the shard version matches
+	updateInput := &dynamodb.UpdateItemInput{
+		TableName:           aws.String(d.tableName),
+		Key:                 key,
+		UpdateExpression:    aws.String("SET shard_metadata = :metadata"),
+		ConditionExpression: aws.String("attribute_exists(sort_key) AND shard_version = :expected_version"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":metadata":         &types.AttributeValueMemberS{Value: string(metadataJSON)},
+			":expected_version": &types.AttributeValueMemberN{Value: strconv.FormatInt(shardVersion, 10)},
+		},
+	}
+
+	_, updateErr := d.client.UpdateItem(ctx, updateInput)
+	if updateErr != nil {
+		if isConditionalCheckFailedException(updateErr) {
+			// Don't read conflict info to avoid expensive extra query
+			return databases.NewDbErrorOnShardConditionFail("shard version mismatch during metadata update", updateErr)
+		}
+		return databases.NewGenericDbError("failed to update shard metadata", updateErr)
+	}
+
+	return nil
 }
 
 func (d *DynamoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
@@ -373,10 +400,7 @@ func (d *DynamoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shard
 		if isConditionalCheckFailedException(transactErr) {
 			// Shard version mismatch - don't perform expensive read query as requested
 			// Just return a generic conflict error without specific version info
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: 0, // Unknown version to avoid expensive read
-			}
-			return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer creation", nil, conflictInfo)
+			return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer creation", nil)
 		}
 		return databases.NewGenericDbError("failed to execute atomic timer creation transaction", transactErr)
 	}
@@ -690,10 +714,7 @@ func (d *DynamoDBTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, 
 		if transactErr != nil {
 			if isConditionalCheckFailedException(transactErr) {
 				// Shard version mismatch
-				conflictInfo := &databases.ShardInfo{
-					ShardVersion: 0, // Unknown version to avoid expensive read
-				}
-				return nil, databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete and insert operation", nil, conflictInfo)
+				return nil, databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete and insert operation", nil)
 			}
 			return nil, databases.NewGenericDbError("failed to execute atomic delete and insert transaction", transactErr)
 		}
@@ -917,7 +938,7 @@ func (d *DynamoDBTimerStore) handleTransactionError(err error, operation string)
 				case "ConditionalCheckFailed":
 					// This could be either a shard version mismatch or timer not found
 					// For simplicity, assume shard version mismatch (more common case)
-					return databases.NewDbErrorOnShardConditionFail("shard version mismatch during "+operation, err, nil)
+					return databases.NewDbErrorOnShardConditionFail("shard version mismatch during "+operation, err)
 				case "ValidationException":
 					return databases.NewGenericDbError("validation error during "+operation, err)
 				}
@@ -1070,11 +1091,7 @@ func (d *DynamoDBTimerStore) DeleteTimer(ctx context.Context, shardId int, shard
 					}
 					if i == 1 {
 						// Second item is shard version check - this is a real error
-						shardInfo := &databases.ShardInfo{
-							ShardId:      int64(shardId),
-							ShardVersion: shardVersion,
-						}
-						return databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete timer", transactErr, shardInfo)
+						return databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete timer", transactErr)
 					}
 				}
 			}

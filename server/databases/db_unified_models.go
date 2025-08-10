@@ -39,7 +39,6 @@ type (
 		OriginalError        error
 		CustomMessage        string
 		ShardConditionFail   bool
-		ConflictShardVersion int64
 		NotExists            bool
 		NotSupport           bool
 	}
@@ -147,12 +146,11 @@ func NewGenericDbError(msg string, err error) *DbError {
 	}
 }
 
-func NewDbErrorOnShardConditionFail(msg string, err error, shardInfo *ShardInfo) *DbError {
+func NewDbErrorOnShardConditionFail(msg string, err error) *DbError {
 	return &DbError{
 		OriginalError:        err,
 		CustomMessage:        msg,
 		ShardConditionFail:   true,
-		ConflictShardVersion: shardInfo.ShardVersion,
 	}
 }
 

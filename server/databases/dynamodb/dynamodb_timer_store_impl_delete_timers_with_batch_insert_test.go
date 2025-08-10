@@ -251,8 +251,6 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ShardVersionMismatch(t *testin
 	// Should fail with shard condition error
 	assert.NotNil(t, deleteErr)
 	assert.True(t, deleteErr.ShardConditionFail)
-	// DynamoDB implementation returns 0 for conflict version to avoid expensive reads
-	assert.Equal(t, int64(0), deleteErr.ConflictShardVersion)
 
 	// Verify original timer still exists (operation was rolled back)
 	timerSortKey := GetTimerSortKey(namespace, timer.Id)
@@ -619,8 +617,6 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ShardVersionChanged(t *testing
 	_, deleteErr := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, initialShardVersion, deleteRequest, timersToInsert)
 	assert.NotNil(t, deleteErr)
 	assert.True(t, deleteErr.ShardConditionFail)
-	// DynamoDB doesn't do expensive reads on conflicts, so it returns 0
-	assert.Equal(t, int64(0), deleteErr.ConflictShardVersion)
 
 	// Try to execute with new shard version (should succeed)
 	response, deleteErr2 := store.RangeDeleteWithBatchInsertTxn(ctx, shardId, newShardVersion, deleteRequest, timersToInsert)

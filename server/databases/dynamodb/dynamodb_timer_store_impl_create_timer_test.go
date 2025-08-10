@@ -225,8 +225,7 @@ func TestCreateTimer_ShardVersionMismatch(t *testing.T) {
 	// Should fail with shard condition error
 	assert.NotNil(t, createErr)
 	assert.True(t, createErr.ShardConditionFail)
-	// Version should be 0 since we don't do expensive reads on conflicts
-	assert.Equal(t, int64(0), createErr.ConflictShardVersion)
+
 
 	// Verify timer was not inserted
 	timerSortKey := GetTimerSortKey(namespace, timer.Id)

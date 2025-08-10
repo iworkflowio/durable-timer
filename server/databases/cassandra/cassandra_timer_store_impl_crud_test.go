@@ -244,7 +244,6 @@ func TestDeleteTimer_ShardVersionMismatch(t *testing.T) {
 	deleteErr := store.DeleteTimer(ctx, shardId, wrongShardVersion, namespace, timer.Id)
 	require.NotNil(t, deleteErr)
 	assert.True(t, deleteErr.ShardConditionFail)
-	assert.Equal(t, shardVersion, deleteErr.ConflictShardVersion)
 
 	// Verify timer still exists
 	retrievedTimer, getErr := store.GetTimer(ctx, shardId, namespace, timer.Id)
@@ -476,7 +475,6 @@ func TestUpdateTimer_ShardVersionMismatch(t *testing.T) {
 	updateErr := store.UpdateTimer(ctx, shardId, wrongShardVersion, namespace, updateRequest)
 	require.NotNil(t, updateErr)
 	assert.True(t, updateErr.ShardConditionFail)
-	assert.Equal(t, shardVersion, updateErr.ConflictShardVersion)
 
 	// Verify timer was not updated
 	retrievedTimer, getErr := store.GetTimer(ctx, shardId, namespace, timer.Id)

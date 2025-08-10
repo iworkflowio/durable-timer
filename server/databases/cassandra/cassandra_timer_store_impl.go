@@ -90,9 +90,8 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 		}
 
 		if !applied {
-			// Another instance created the record concurrently, extract previous shard info
-			prevInfo := extractShardInfoFromCassandraMap(previous, int64(shardId))
-			return nil, nil, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil, prevInfo)
+			// Another instance created the record concurrently
+			return nil, nil, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil)
 		}
 
 		// Successfully created new record, return nil for prevShardInfo and current info
@@ -138,9 +137,8 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	}
 
 	if !applied {
-		// Version changed concurrently, extract conflict info from previous map
-		conflictInfo := extractShardInfoFromCassandraMap(previous, int64(shardId))
-		return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
+		// Version changed concurrently
+		return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil)
 	}
 
 	// Successfully updated, return both previous and current shard info
@@ -224,9 +222,8 @@ func (c *CassandraTimerStore) UpdateShardMetadata(
 	}
 
 	if !applied {
-		// Extract conflict info from the returned previous values
-		conflictInfo := extractShardInfoFromCassandraMap(previous, int64(shardId))
-		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during metadata update", nil, conflictInfo)
+		// Version mismatch during metadata update
+		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during metadata update", nil)
 	}
 
 	return nil
@@ -296,13 +293,8 @@ func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shar
 
 	if !applied {
 		// Batch failed - check if it was due to shard version mismatch or shard not existing
-		var conflictShardVersion int64
 		if shardVersionValue, exists := previous["shard_version"]; exists && shardVersionValue != nil {
-			conflictShardVersion = shardVersionValue.(int64)
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: conflictShardVersion,
-			}
-			return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer creation", nil, conflictInfo)
+			return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer creation", nil)
 		} else {
 			// Shard doesn't exist
 			return databases.NewGenericDbError("shard record does not exist", nil)
@@ -528,13 +520,8 @@ func (c *CassandraTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context,
 
 	if !applied {
 		// Batch failed - check if it was due to shard version mismatch or shard not existing
-		var conflictShardVersion int64
 		if shardVersionValue, exists := previous["shard_version"]; exists && shardVersionValue != nil {
-			conflictShardVersion = shardVersionValue.(int64)
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: conflictShardVersion,
-			}
-			return nil, databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete and insert operation", nil, conflictInfo)
+			return nil, databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete and insert operation", nil)
 		} else {
 			// Shard doesn't exist
 			return nil, databases.NewGenericDbError("shard record does not exist", nil)
@@ -702,10 +689,7 @@ func (c *CassandraTimerStore) UpdateTimer(ctx context.Context, shardId int, shar
 					return databases.NewDbErrorNotExists("timer not found", nil)
 				} else {
 					// Shard version mismatch
-					conflictInfo := &databases.ShardInfo{
-						ShardVersion: actualShardVersion,
-					}
-					return databases.NewDbErrorOnShardConditionFail("shard version mismatch during update operation", nil, conflictInfo)
+					return databases.NewDbErrorOnShardConditionFail("shard version mismatch during update operation", nil)
 				}
 			} else {
 				// Shard version field exists but is null - unexpected case
@@ -866,10 +850,7 @@ func (c *CassandraTimerStore) DeleteTimer(ctx context.Context, shardId int, shar
 					return databases.NewDbErrorNotExists("timer not found", nil)
 				} else {
 					// Shard version mismatch
-					conflictInfo := &databases.ShardInfo{
-						ShardVersion: actualShardVersion,
-					}
-					return databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete operation", nil, conflictInfo)
+					return databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete operation", nil)
 				}
 			} else {
 				// Shard version field exists but is null - unexpected case

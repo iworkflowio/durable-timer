@@ -147,14 +147,7 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 		if insertErr != nil {
 			// Check if it's a duplicate key error (another instance created it concurrently)
 			if isDuplicateKeyError(insertErr) {
-				// Try to read the existing record to return conflict info
-				var conflictDoc bson.M
-				conflictErr := m.collection.FindOne(ctx, filter).Decode(&conflictDoc)
-
-				if conflictErr == nil {
-					conflictInfo := extractShardInfoFromMongoDoc(conflictDoc, int64(shardId))
-					return nil, nil, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil, conflictInfo)
-				}
+				return nil, nil, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", insertErr)
 			}
 			return nil, nil, databases.NewGenericDbError("failed to insert new shard record", insertErr)
 		}
@@ -202,18 +195,8 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 	}
 
 	if result.MatchedCount == 0 {
-		// Version changed concurrently, extract conflict info from a new read
-		var conflictDoc bson.M
-		conflictErr := m.collection.FindOne(ctx, filter).Decode(&conflictDoc)
-		if conflictErr == nil {
-			conflictInfo := extractShardInfoFromMongoDoc(conflictDoc, int64(shardId))
-			return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
-		}
-		// Fallback conflict info
-		conflictInfo := &databases.ShardInfo{
-			ShardVersion: currentVersion,
-		}
-		return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
+		// Don't read conflict info to avoid expensive extra query
+		return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil)
 	}
 
 	// Successfully updated, return both previous and current shard info
@@ -226,6 +209,51 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 	}
 
 	return prevShardInfo, currentShardInfo, nil
+}
+
+func (m *MongoDBTimerStore) UpdateShardMetadata(
+	ctx context.Context,
+	shardId int,
+	shardVersion int64,
+	metadata databases.ShardMetadata,
+) (err *databases.DbError) {
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+
+	// Marshal metadata to JSON
+	metadataJSON, marshalErr := json.Marshal(metadata)
+	if marshalErr != nil {
+		return databases.NewGenericDbError("failed to marshal shard metadata", marshalErr)
+	}
+
+	// MongoDB document filter for shard record with version check
+	filter := bson.M{
+		"shard_id":         shardId,
+		"row_type":         databases.RowTypeShard,
+		"timer_execute_at": databases.ZeroTimestamp,
+		"timer_uuid_high":  zeroUuidHigh,
+		"timer_uuid_low":   zeroUuidLow,
+		"shard_version":    shardVersion, // Only update if version matches
+	}
+
+	// Update shard metadata using optimistic concurrency control
+	update := bson.M{
+		"$set": bson.M{
+			"shard_metadata": string(metadataJSON),
+		},
+	}
+
+	result, updateErr := m.collection.UpdateOne(ctx, filter, update)
+	if updateErr != nil {
+		return databases.NewGenericDbError("failed to update shard metadata", updateErr)
+	}
+
+	if result.MatchedCount == 0 {
+		// No documents matched means either shard doesn't exist or version mismatch
+		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during metadata update", nil)
+	}
+
+	return nil
 }
 
 // Helper functions for BSON value extraction
@@ -351,10 +379,7 @@ func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardV
 		if shardErr != nil {
 			if errors.Is(shardErr, mongo.ErrNoDocuments) {
 				// Shard doesn't exist
-				conflictInfo := &databases.ShardInfo{
-					ShardVersion: 0,
-				}
-				dbErr = databases.NewDbErrorOnShardConditionFail("shard not found during timer creation", nil, conflictInfo)
+				dbErr = databases.NewDbErrorOnShardConditionFail("shard not found during timer creation", nil)
 				return nil // Return from transaction function, will abort transaction
 			}
 			dbErr = databases.NewGenericDbError("failed to read shard", shardErr)
@@ -365,10 +390,7 @@ func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardV
 		actualShardVersion := getInt64FromBSON(shardDoc, "shard_version")
 		if actualShardVersion != shardVersion {
 			// Version mismatch
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: actualShardVersion,
-			}
-			dbErr = databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer creation", nil, conflictInfo)
+			dbErr = databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer creation", nil)
 			return nil // Return from transaction function, will abort transaction
 		}
 
@@ -679,10 +701,7 @@ func (c *MongoDBTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, s
 		actualShardVersion := getInt64FromBSON(shardDoc, "shard_version")
 		if actualShardVersion != shardVersion {
 			// Version mismatch
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: actualShardVersion,
-			}
-			dbErr = databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete and insert operation", nil, conflictInfo)
+			dbErr = databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete and insert operation", nil)
 			return nil
 		}
 
@@ -898,10 +917,7 @@ func (c *MongoDBTimerStore) UpdateTimer(ctx context.Context, shardId int, shardV
 		shardErr := c.collection.FindOne(sc, shardFilter).Decode(&shardDoc)
 		if shardErr != nil {
 			if errors.Is(shardErr, mongo.ErrNoDocuments) {
-				conflictInfo := &databases.ShardInfo{
-					ShardVersion: 0,
-				}
-				dbErr = databases.NewDbErrorOnShardConditionFail("shard not found during timer update", nil, conflictInfo)
+				dbErr = databases.NewDbErrorOnShardConditionFail("shard not found during timer update", nil)
 				return nil
 			}
 			dbErr = databases.NewGenericDbError("failed to read shard", shardErr)
@@ -911,10 +927,7 @@ func (c *MongoDBTimerStore) UpdateTimer(ctx context.Context, shardId int, shardV
 		// Get actual shard version and compare
 		actualShardVersion := getInt64FromBSON(shardDoc, "shard_version")
 		if actualShardVersion != shardVersion {
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: actualShardVersion,
-			}
-			dbErr = databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer update", nil, conflictInfo)
+			dbErr = databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer update", nil)
 			return nil
 		}
 
@@ -1066,10 +1079,7 @@ func (c *MongoDBTimerStore) DeleteTimer(ctx context.Context, shardId int, shardV
 		shardErr := c.collection.FindOne(sc, shardFilter).Decode(&shardDoc)
 		if shardErr != nil {
 			if errors.Is(shardErr, mongo.ErrNoDocuments) {
-				conflictInfo := &databases.ShardInfo{
-					ShardVersion: 0,
-				}
-				dbErr = databases.NewDbErrorOnShardConditionFail("shard not found during timer delete", nil, conflictInfo)
+				dbErr = databases.NewDbErrorOnShardConditionFail("shard not found during timer delete", nil)
 				return nil
 			}
 			dbErr = databases.NewGenericDbError("failed to read shard", shardErr)
@@ -1079,10 +1089,7 @@ func (c *MongoDBTimerStore) DeleteTimer(ctx context.Context, shardId int, shardV
 		// Get actual shard version and compare
 		actualShardVersion := getInt64FromBSON(shardDoc, "shard_version")
 		if actualShardVersion != shardVersion {
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: actualShardVersion,
-			}
-			dbErr = databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer delete", nil, conflictInfo)
+			dbErr = databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer delete", nil)
 			return nil
 		}
 

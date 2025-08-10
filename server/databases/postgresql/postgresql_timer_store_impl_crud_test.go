@@ -250,7 +250,7 @@ func TestUpdateTimer_ShardVersionMismatch(t *testing.T) {
 	updateErr := store.UpdateTimer(ctx, shardId, wrongShardVersion, namespace, updateRequest)
 	assert.NotNil(t, updateErr)
 	assert.True(t, updateErr.ShardConditionFail)
-	assert.Equal(t, shardVersion, updateErr.ConflictShardVersion)
+
 }
 
 func TestUpdateTimer_TimerNotFound(t *testing.T) {
@@ -363,7 +363,6 @@ func TestDeleteTimer_ShardVersionMismatch(t *testing.T) {
 	deleteErr := store.DeleteTimer(ctx, shardId, wrongShardVersion, namespace, "timer-1")
 	assert.NotNil(t, deleteErr)
 	assert.True(t, deleteErr.ShardConditionFail)
-	assert.Equal(t, shardVersion, deleteErr.ConflictShardVersion)
 
 	// Verify timer still exists
 	retrievedTimer, getErr := store.GetTimer(ctx, shardId, namespace, "timer-1")

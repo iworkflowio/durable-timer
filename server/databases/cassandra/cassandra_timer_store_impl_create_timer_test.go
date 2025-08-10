@@ -196,7 +196,6 @@ func TestCreateTimer_ShardVersionMismatch(t *testing.T) {
 	// Should fail with shard condition error
 	assert.NotNil(t, createErr)
 	assert.True(t, createErr.ShardConditionFail)
-	assert.Equal(t, actualShardVersion, createErr.ConflictShardVersion)
 
 	// Verify timer was not inserted by checking it doesn't exist in the index
 	var dbTimerId string

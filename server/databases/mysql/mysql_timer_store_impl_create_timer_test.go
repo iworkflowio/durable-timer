@@ -207,8 +207,6 @@ func TestCreateTimer_ShardVersionMismatch(t *testing.T) {
 	// Should fail with shard condition error
 	assert.NotNil(t, createErr)
 	assert.True(t, createErr.ShardConditionFail)
-	// With transactions, we can return the actual conflicting version
-	assert.Equal(t, actualShardVersion, createErr.ConflictShardVersion)
 
 	// Verify timer was not inserted
 	var count int
@@ -313,7 +311,6 @@ func TestCreateTimer_NoShardRecord(t *testing.T) {
 	// Should fail with shard condition error
 	assert.NotNil(t, createErr)
 	assert.True(t, createErr.ShardConditionFail)
-	assert.Equal(t, int64(0), createErr.ConflictShardVersion)
 
 	// Verify timer was not inserted
 	var count int

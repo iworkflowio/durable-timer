@@ -102,11 +102,8 @@ func (p *PostgreSQLTimerStore) ClaimShardOwnership(
 		if insertErr != nil {
 			// Check if it's a duplicate key error (another instance created it concurrently)
 			if isDuplicateKeyError(insertErr) {
-				// Try to read the existing record to return conflict info
-				conflictInfo := p.extractShardInfoFromRecord(ctx, shardId)
-				if conflictInfo != nil {
-					return nil, nil, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil, conflictInfo)
-				}
+				// Don't read conflict info to avoid expensive extra query
+				return nil, nil, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", insertErr)
 			}
 			return nil, nil, databases.NewGenericDbError("failed to insert new shard record", insertErr)
 		}
@@ -158,16 +155,9 @@ func (p *PostgreSQLTimerStore) ClaimShardOwnership(
 	}
 
 	if rowsAffected == 0 {
-		// Version changed concurrently, extract conflict info from a new read
-		conflictInfo := p.extractShardInfoFromRecord(ctx, shardId)
-		if conflictInfo != nil {
-			return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
-		}
-		// Fallback conflict info
-		conflictInfo = &databases.ShardInfo{
-			ShardVersion: currentVersion,
-		}
-		return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
+		// Version changed concurrently, don't read conflict info to avoid expensive extra query
+		updateErr := errors.New("no rows affected")
+		return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", updateErr)
 	}
 
 	// Successfully updated, return both previous and current shard info
@@ -180,6 +170,47 @@ func (p *PostgreSQLTimerStore) ClaimShardOwnership(
 	}
 
 	return prevShardInfo, currentShardInfo, nil
+}
+
+func (p *PostgreSQLTimerStore) UpdateShardMetadata(
+	ctx context.Context,
+	shardId int,
+	shardVersion int64,
+	metadata databases.ShardMetadata,
+) (err *databases.DbError) {
+	// Convert ZeroUUID to high/low format for shard records
+	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+
+	// Marshal metadata to JSON
+	metadataJSON, marshalErr := json.Marshal(metadata)
+	if marshalErr != nil {
+		return databases.NewGenericDbError("failed to marshal shard metadata", marshalErr)
+	}
+
+	// Update shard metadata using optimistic concurrency control
+	updateQuery := `UPDATE timers SET shard_metadata = $1 
+	                WHERE shard_id = $2 AND row_type = $3 AND timer_execute_at = $4 AND timer_uuid_high = $5 AND timer_uuid_low = $6 AND shard_version = $7`
+
+	result, updateErr := p.db.ExecContext(ctx, updateQuery,
+		string(metadataJSON), shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
+
+	if updateErr != nil {
+		return databases.NewGenericDbError("failed to update shard metadata", updateErr)
+	}
+
+	rowsAffected, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		return databases.NewGenericDbError("failed to get rows affected", rowsErr)
+	}
+
+	if rowsAffected == 0 {
+		// No rows updated means either shard doesn't exist or version mismatch
+		// Create a minimal error to avoid nil pointer dereference in DbError.Error()
+		err := errors.New("no rows affected")
+		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during metadata update", err)
+	}
+
+	return nil
 }
 
 // isDuplicateKeyError checks if the error is a PostgreSQL duplicate key error
@@ -272,10 +303,7 @@ func (p *PostgreSQLTimerStore) CreateTimer(ctx context.Context, shardId int, sha
 	if shardErr != nil {
 		if errors.Is(shardErr, sql.ErrNoRows) {
 			// Shard doesn't exist
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: 0,
-			}
-			return databases.NewDbErrorOnShardConditionFail("shard not found during timer creation", nil, conflictInfo)
+			return databases.NewDbErrorOnShardConditionFail("shard not found during timer creation", nil)
 		}
 		return databases.NewGenericDbError("failed to read shard", shardErr)
 	}
@@ -283,10 +311,7 @@ func (p *PostgreSQLTimerStore) CreateTimer(ctx context.Context, shardId int, sha
 	// Compare shard versions
 	if actualShardVersion != shardVersion {
 		// Version mismatch
-		conflictInfo := &databases.ShardInfo{
-			ShardVersion: actualShardVersion,
-		}
-		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer creation", nil, conflictInfo)
+		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer creation", nil)
 	}
 
 	// Shard version matches, proceed to upsert timer within the transaction (overwrite if exists)
@@ -505,10 +530,7 @@ func (c *PostgreSQLTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context
 	// Compare shard versions
 	if actualShardVersion != shardVersion {
 		// Version mismatch
-		conflictInfo := &databases.ShardInfo{
-			ShardVersion: actualShardVersion,
-		}
-		return nil, databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete and insert operation", nil, conflictInfo)
+		return nil, databases.NewDbErrorOnShardConditionFail("shard version mismatch during delete and insert operation", nil)
 	}
 
 	// Delete timers in the specified range
@@ -665,10 +687,7 @@ func (c *PostgreSQLTimerStore) UpdateTimer(ctx context.Context, shardId int, sha
 	if shardErr != nil {
 		if errors.Is(shardErr, sql.ErrNoRows) {
 			// Shard doesn't exist
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: 0,
-			}
-			return databases.NewDbErrorOnShardConditionFail("shard not found during timer update", nil, conflictInfo)
+			return databases.NewDbErrorOnShardConditionFail("shard not found during timer update", nil)
 		}
 		return databases.NewGenericDbError("failed to read shard", shardErr)
 	}
@@ -676,10 +695,7 @@ func (c *PostgreSQLTimerStore) UpdateTimer(ctx context.Context, shardId int, sha
 	// Compare shard versions
 	if actualShardVersion != shardVersion {
 		// Version mismatch
-		conflictInfo := &databases.ShardInfo{
-			ShardVersion: actualShardVersion,
-		}
-		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer update", nil, conflictInfo)
+		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer update", nil)
 	}
 
 	// Get current timer to preserve certain fields and check if ExecuteAt changed
@@ -860,10 +876,7 @@ func (c *PostgreSQLTimerStore) DeleteTimer(ctx context.Context, shardId int, sha
 	if shardErr != nil {
 		if errors.Is(shardErr, sql.ErrNoRows) {
 			// Shard doesn't exist
-			conflictInfo := &databases.ShardInfo{
-				ShardVersion: 0,
-			}
-			return databases.NewDbErrorOnShardConditionFail("shard not found during timer delete", nil, conflictInfo)
+			return databases.NewDbErrorOnShardConditionFail("shard not found during timer delete", nil)
 		}
 		return databases.NewGenericDbError("failed to read shard", shardErr)
 	}
@@ -871,10 +884,7 @@ func (c *PostgreSQLTimerStore) DeleteTimer(ctx context.Context, shardId int, sha
 	// Compare shard versions
 	if actualShardVersion != shardVersion {
 		// Version mismatch
-		conflictInfo := &databases.ShardInfo{
-			ShardVersion: actualShardVersion,
-		}
-		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer delete", nil, conflictInfo)
+		return databases.NewDbErrorOnShardConditionFail("shard version mismatch during timer delete", nil)
 	}
 
 	// Delete the timer using the unique index (optimized - no lookup needed)
