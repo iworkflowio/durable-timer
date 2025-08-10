@@ -44,20 +44,12 @@ func (c *CassandraTimerStore) Close() error {
 	return nil
 }
 func (c *CassandraTimerStore) ClaimShardOwnership(
-	ctx context.Context, shardId int, ownerAddr string, metadata interface{},
-) (shardVersion int64, retErr *databases.DbError) {
+	ctx context.Context,
+	shardId int,
+	ownerAddr string,
+) (prevShardInfo, currentShardInfo *databases.ShardInfo, err *databases.DbError) {
 	// Convert ZeroUUID to high/low format for shard records
 	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
-
-	// Serialize metadata to JSON
-	var metadataJSON string
-	if metadata != nil {
-		metadataBytes, err := json.Marshal(metadata)
-		if err != nil {
-			return 0, databases.NewGenericDbError("failed to marshal metadata", err)
-		}
-		metadataJSON = string(metadataBytes)
-	}
 
 	now := time.Now().UTC()
 	// When CAS fails, Cassandra returns the existing row values
@@ -66,66 +58,137 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	// First, try to read the current shard record from unified timers table
 	var currentVersion int64
 	var currentOwnerAddr string
-	query := `SELECT shard_version, shard_owner_addr FROM timers WHERE shard_id = ? AND row_type = ?`
-	err := c.session.Query(query, shardId, databases.RowTypeShard).WithContext(ctx).Scan(&currentVersion, &currentOwnerAddr)
+	var currentClaimedAt time.Time
+	var currentMetadataJSON string
 
-	if err != nil && !errors.Is(err, gocql.ErrNotFound) {
-		return 0, databases.NewGenericDbError("failed to read shard record: %w", err)
+	query := `SELECT shard_version, shard_owner_addr, shard_claimed_at, shard_metadata FROM timers WHERE shard_id = ? AND row_type = ?`
+	err2 := c.session.Query(query, shardId, databases.RowTypeShard).WithContext(ctx).Scan(&currentVersion, &currentOwnerAddr, &currentClaimedAt, &currentMetadataJSON)
+
+	if err2 != nil && !errors.Is(err2, gocql.ErrNotFound) {
+		return nil, nil, databases.NewGenericDbError("failed to read shard record", err2)
 	}
 
-	if errors.Is(err, gocql.ErrNotFound) {
+	if errors.Is(err2, gocql.ErrNotFound) {
 		// Shard doesn't exist, create it with version 1
 		newVersion := int64(1)
+
+		// Initialize empty metadata
+		defaultMetadata := databases.ShardMetadata{}
+		metadataJSON, marshalErr := json.Marshal(defaultMetadata)
+		if marshalErr != nil {
+			return nil, nil, databases.NewGenericDbError("failed to marshal default metadata", marshalErr)
+		}
 
 		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, shard_version, shard_owner_addr, shard_claimed_at, shard_metadata) 
 		                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`
 
-		applied, err := c.session.Query(insertQuery, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, newVersion, ownerAddr, now, metadataJSON).
+		applied, insertErr := c.session.Query(insertQuery, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, newVersion, ownerAddr, now, string(metadataJSON)).
 			WithContext(ctx).MapScanCAS(previous)
 
-		if err != nil {
-			return 0, databases.NewGenericDbError("failed to insert new shard record", err)
+		if insertErr != nil {
+			return nil, nil, databases.NewGenericDbError("failed to insert new shard record", insertErr)
 		}
 
 		if !applied {
-			// Another instance created the record concurrently, return conflict info
-			conflictInfo := &databases.ShardInfo{
-				ShardId:      int64(previous["shard_id"].(int)),
-				OwnerAddr:    previous["shard_owner_addr"].(string),
-				ClaimedAt:    previous["shard_claimed_at"].(time.Time),
-				Metadata:     previous["shard_metadata"],
-				ShardVersion: previous["shard_version"].(int64),
-			}
-			return 0, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil, conflictInfo)
-		} else {
-			// Successfully created new record
-			return newVersion, nil
+			// Another instance created the record concurrently, extract previous shard info
+			prevInfo := extractShardInfoFromCassandraMap(previous, int64(shardId))
+			return nil, nil, databases.NewDbErrorOnShardConditionFail("failed to insert shard record due to concurrent insert", nil, prevInfo)
 		}
+
+		// Successfully created new record, return nil for prevShardInfo and current info
+		currentShardInfo = &databases.ShardInfo{
+			ShardId:      int64(shardId),
+			OwnerAddr:    ownerAddr,
+			ShardVersion: newVersion,
+			Metadata:     defaultMetadata,
+			ClaimedAt:    now,
+		}
+		return nil, currentShardInfo, nil
+	}
+
+	// Parse current metadata
+	var currentMetadata databases.ShardMetadata
+	if currentMetadataJSON != "" {
+		if parseErr := json.Unmarshal([]byte(currentMetadataJSON), &currentMetadata); parseErr != nil {
+			return nil, nil, databases.NewGenericDbError("failed to unmarshal shard metadata", parseErr)
+		}
+	}
+
+	// Store previous shard info
+	prevShardInfo = &databases.ShardInfo{
+		ShardId:      int64(shardId),
+		OwnerAddr:    currentOwnerAddr,
+		ShardVersion: currentVersion,
+		Metadata:     currentMetadata,
+		ClaimedAt:    currentClaimedAt,
 	}
 
 	// Update the shard with new version and ownership using optimistic concurrency control
 	newVersion := currentVersion + 1
-	updateQuery := `UPDATE timers SET shard_version = ?, shard_owner_addr = ?, shard_claimed_at = ?, shard_metadata = ? 
+
+	updateQuery := `UPDATE timers SET shard_version = ?, shard_owner_addr = ?, shard_claimed_at = ?
 	                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
 
-	applied, err := c.session.Query(updateQuery, newVersion, ownerAddr, now, metadataJSON,
+	applied, updateErr := c.session.Query(updateQuery, newVersion, ownerAddr, now,
 		shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, currentVersion).
 		WithContext(ctx).MapScanCAS(previous)
 
-	if err != nil {
-		return 0, databases.NewGenericDbError("failed to update shard record", err)
+	if updateErr != nil {
+		return nil, nil, databases.NewGenericDbError("failed to update shard record", updateErr)
 	}
 
 	if !applied {
-		// Version changed concurrently, return conflict info
-		// only version is available
-		conflictInfo := &databases.ShardInfo{
-			ShardVersion: previous["shard_version"].(int64),
-		}
-		return 0, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
+		// Version changed concurrently, extract conflict info from previous map
+		conflictInfo := extractShardInfoFromCassandraMap(previous, int64(shardId))
+		return nil, nil, databases.NewDbErrorOnShardConditionFail("shard ownership claim failed due to concurrent modification", nil, conflictInfo)
 	}
 
-	return newVersion, nil
+	// Successfully updated, return both previous and current shard info
+	currentShardInfo = &databases.ShardInfo{
+		ShardId:      int64(shardId),
+		OwnerAddr:    ownerAddr,
+		ShardVersion: newVersion,
+		Metadata:     currentMetadata,
+		ClaimedAt:    now,
+	}
+
+	return prevShardInfo, currentShardInfo, nil
+}
+
+// extractShardInfoFromCassandraMap extracts ShardInfo from Cassandra CAS result map
+func extractShardInfoFromCassandraMap(cassandraMap map[string]interface{}, shardId int64) *databases.ShardInfo {
+	info := &databases.ShardInfo{
+		ShardId: shardId,
+	}
+
+	if version, exists := cassandraMap["shard_version"]; exists && version != nil {
+		if v, ok := version.(int64); ok {
+			info.ShardVersion = v
+		}
+	}
+
+	if owner, exists := cassandraMap["shard_owner_addr"]; exists && owner != nil {
+		if o, ok := owner.(string); ok {
+			info.OwnerAddr = o
+		}
+	}
+
+	if claimedAt, exists := cassandraMap["shard_claimed_at"]; exists && claimedAt != nil {
+		if c, ok := claimedAt.(time.Time); ok {
+			info.ClaimedAt = c
+		}
+	}
+
+	if metadata, exists := cassandraMap["shard_metadata"]; exists && metadata != nil {
+		if m, ok := metadata.(string); ok && m != "" {
+			var shardMetadata databases.ShardMetadata
+			if err := json.Unmarshal([]byte(m), &shardMetadata); err == nil {
+				info.Metadata = shardMetadata
+			}
+		}
+	}
+
+	return info
 }
 
 func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {

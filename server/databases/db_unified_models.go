@@ -25,8 +25,14 @@ type (
 		ShardId      int64
 		OwnerAddr    string
 		ShardVersion int64
-		Metadata     interface{}
+		Metadata     ShardMetadata
 		ClaimedAt    time.Time
+	}
+
+	ShardMetadata struct {
+		// CommittedTimestamp and CommittedUuid are used to track the offset that can be safely deleted
+		CommittedOffsetTimestamp time.Time
+		CommittedOffsetUuid      uuid.UUID
 	}
 
 	DbError struct {

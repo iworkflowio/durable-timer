@@ -16,8 +16,7 @@ type (
 			ctx context.Context,
 			shardId int,
 			ownerAddr string,
-			metadata interface{},
-		) (shardVersion int64, err *DbError)
+		) (prevShardInfo, currentShardInfo *ShardInfo, err *DbError)
 
 		CreateTimer(
 			ctx context.Context,

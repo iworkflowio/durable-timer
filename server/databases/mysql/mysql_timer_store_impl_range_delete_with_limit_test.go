@@ -331,7 +331,7 @@ func TestRangeDeleteWithLimit_WithPayload(t *testing.T) {
 		} else {
 			assert.Nil(t, getErr, fmt.Sprintf("Timer %d should still exist", i))
 			assert.Equal(t, fmt.Sprintf("timer-payload-%d", i), timer.Id)
-			
+
 			// Verify payload is preserved
 			if timer.Payload != nil {
 				payloadMap, ok := timer.Payload.(map[string]interface{})
