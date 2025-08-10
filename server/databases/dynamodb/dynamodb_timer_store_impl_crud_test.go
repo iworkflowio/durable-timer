@@ -21,10 +21,12 @@ func TestGetTimer_Success(t *testing.T) {
 	// First, create a shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
+
 	require.Equal(t, int64(1), shardVersion)
 
 	// Create a timer to retrieve
@@ -95,10 +97,11 @@ func TestDeleteTimer_Success(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Create a timer to delete
 	now := time.Now().UTC().Truncate(time.Millisecond)
@@ -146,10 +149,11 @@ func TestDeleteTimer_NotExists(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Try to delete a non-existent timer (should be idempotent)
 	deleteErr := store.DeleteTimer(ctx, shardId, shardVersion, namespace, "non-existent-timer")
@@ -167,10 +171,11 @@ func TestUpdateTimer_InPlaceUpdate(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Create a timer to update
 	now := time.Now().UTC().Truncate(time.Millisecond)
@@ -246,10 +251,11 @@ func TestUpdateTimer_ExecutionTimeChange(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Create a timer to update
 	now := time.Now().UTC().Truncate(time.Millisecond)
@@ -307,10 +313,11 @@ func TestUpdateTimer_NotExists(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Try to update a non-existent timer
 	updateRequest := &databases.UpdateDbTimerRequest{
@@ -335,10 +342,11 @@ func TestCreateTimerAttemptsPreservation(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	now := time.Now().UTC().Truncate(time.Millisecond)
 
@@ -406,7 +414,7 @@ func TestCreateTimerAttemptsPreservation(t *testing.T) {
 		StartTimeUuid:  databases.ZeroUUID,
 		EndTimestamp:   now.Add(5 * time.Minute),
 		EndTimeUuid:    databases.MaxUUID,
-		Limit:         10,
+		Limit:          10,
 	}
 	response, getErr4 := store.RangeGetTimers(ctx, shardId, request)
 	require.Nil(t, getErr4)

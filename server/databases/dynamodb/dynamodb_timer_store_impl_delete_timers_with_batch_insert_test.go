@@ -27,10 +27,12 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_Basic(t *testing.T) {
 	// First, create a shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
+
 	require.Equal(t, int64(1), shardVersion)
 
 	// Create some timers to be deleted
@@ -205,10 +207,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ShardVersionMismatch(t *testin
 
 	// First, create a shard record
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	actualShardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Create a timer to be deleted
 	now := time.Now().UTC().Truncate(time.Millisecond) // DynamoDB stores in UTC with millisecond precision
@@ -290,10 +293,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_EmptyDelete(t *testing.T) {
 
 	// First, create a shard record
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Create a timer outside the delete range
 	now := time.Now()
@@ -372,10 +376,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_NoInserts(t *testing.T) {
 
 	// First, create a shard record
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Create timers to be deleted
 	now := time.Now()
@@ -455,10 +460,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ConcurrentOperations(t *testin
 
 	// First, create a shard record
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Create timers in different time ranges for concurrent operations
 	now := time.Now()
@@ -570,10 +576,12 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ShardVersionChanged(t *testing
 
 	// First, create a shard record
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	initialShardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
+
 	require.Equal(t, int64(1), initialShardVersion)
 
 	// Create a timer to be deleted
@@ -593,10 +601,12 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_ShardVersionChanged(t *testing
 
 	// Simulate shard ownership change by claiming it again (increments version)
 	_, newCurrentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-2")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, newCurrentShardInfo)
 	newShardVersion := newCurrentShardInfo.ShardVersion
-	require.Nil(t, err)
+
 	require.Equal(t, int64(2), newShardVersion) // Should be incremented
 
 	// Create new timer to insert
@@ -667,10 +677,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_InvalidPayloadSerialization(t 
 
 	// First, create a shard record
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Create timer to be deleted
 	now := time.Now()
@@ -736,10 +747,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_LargeTimestamp(t *testing.T) {
 
 	// First, create a shard record
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Create timers spread across a large time range
 	now := time.Now()
@@ -846,10 +858,11 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_InsertInDeleteRange(t *testing
 
 	// First, create a shard record
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Create timers that will be deleted
 	now := time.Now()

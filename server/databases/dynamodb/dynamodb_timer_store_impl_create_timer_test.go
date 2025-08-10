@@ -27,10 +27,12 @@ func TestCreateTimer_Basic(t *testing.T) {
 	// First, create a shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
+
 	require.Equal(t, int64(1), shardVersion)
 
 	// Create a timer
@@ -81,10 +83,11 @@ func TestCreateTimer_WithPayload(t *testing.T) {
 
 	// First claim the shard
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Create timer with complex payload
 	payload := map[string]interface{}{
@@ -141,10 +144,11 @@ func TestCreateTimer_WithRetryPolicy(t *testing.T) {
 
 	// First claim the shard
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// Create timer with retry policy
 	retryPolicy := map[string]interface{}{
@@ -200,10 +204,11 @@ func TestCreateTimer_ShardVersionMismatch(t *testing.T) {
 
 	// First claim the shard
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	actualShardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	timer := &databases.DbTimer{
 		Id:                     "timer-version-mismatch",
@@ -252,10 +257,11 @@ func TestCreateTimer_ConcurrentCreation(t *testing.T) {
 
 	// First claim the shard
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, "owner-1")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	numGoroutines := 10
 	var wg sync.WaitGroup
@@ -634,10 +640,11 @@ func TestCreateTimer_DuplicateTimerOverwrite(t *testing.T) {
 	// Create shard record
 	ownerAddr := "owner-1"
 	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	require.NotNil(t, currentShardInfo)
 	shardVersion := currentShardInfo.ShardVersion
-	require.Nil(t, err)
 
 	// 1. Create original timer
 	originalExecuteAt := time.Now().Add(5 * time.Minute)
