@@ -30,7 +30,7 @@ type (
 	}
 
 	ShardMetadata struct {
-		// CommittedTimestamp and CommittedUuid are used to track the offset that can be safely deleted
+		// CommittedTimestamp and CommittedUuid are used to track the timer completed offset that indicating timers before this offset can be safely deleted
 		CommittedOffsetTimestamp time.Time
 		CommittedOffsetUuid      uuid.UUID
 	}
