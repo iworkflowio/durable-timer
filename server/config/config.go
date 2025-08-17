@@ -123,22 +123,18 @@ func setTimerBatchReaderDefaults(config *TimerBatchReaderConfig) {
 	}
 
 	// MaxPreloadTimeDuration default is 1 minute
-	if config.MaxPreloadTimeDuration == 0 {
-		config.MaxPreloadTimeDuration = 1 * time.Minute
+	if config.MaxPreloadTimeDuration == nil {
+		duration := 1 * time.Minute
+		config.MaxPreloadTimeDuration = &duration
 	}
 
-	// MaxLookAheadTimeDuration default is 5 minutes
+	// MaxLookAheadTimeDuration default is 1 minutes
 	if config.MaxLookAheadTimeDuration == 0 {
-		config.MaxLookAheadTimeDuration = 5 * time.Minute
+		config.MaxLookAheadTimeDuration = 1 * time.Minute
 	}
 
 	// BatchReadLimitPerRequest default is 1000
 	if config.BatchReadLimitPerRequest == 0 {
 		config.BatchReadLimitPerRequest = 1000
-	}
-
-	// NoLockInsertSafetyDuration default is 10 seconds
-	if config.NoLockInsertSafetyDuration == 0 {
-		config.NoLockInsertSafetyDuration = 10 * time.Second
 	}
 }

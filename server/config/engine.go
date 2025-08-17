@@ -71,29 +71,23 @@ type TimerBatchReaderConfig struct {
 	// Note that the actual loading condition also depends on the MaxPreloadTimeDuration and MaxLookAheadTimeDuration, and whether there are timers can be loaded.
 	QueueAvailableThresholdToLoad float64
 	// MaxPreloadTimeDuration is the how far we can preload the timers from the database into the queue.
-	// The longer the duration, the more timers we can preload for read efficiency, but the more likely that we get new timers inserted into the loaded time window.
-	// The shorter the duration, the less likely that we get new timers inserted into the loaded time window,
-	// which could cause the queue oversize the MaxQueueSizeToUnload and trigger the unload
-	// Default is 1 minute
-	MaxPreloadTimeDuration time.Duration
+	// The longer the duration, the more timers we can preload for read efficiency, but the more likely that we get new timers inserted into the loaded time window which will cause the queue oversize the MaxQueueSizeToUnload and trigger the unload.
+	// Default is 1 minute. Setting it to zero means no preload.
+	MaxPreloadTimeDuration *time.Duration
 	// MaxLookAheadTimeDuration is the max time duration to look ahead.
 	// Looking ahead is the mechanism when preload time window does not have enough timers to fill the queue,
 	// it will look ahead to get a next timer after the preload time window.
 	// The duration means the max time duration to look ahead.
-	// If the next timer is found, it will trigger the next preload.
-	// If the next timer is not found, it will trigger the next preload with the MaxPreloadTimeDuration.
-	// It is not suggested to be too large because:
-	//   1. There could be edge cases during shard movements that timer is inserted without the owner instance acknowledges
-	//   2. It will impact the NoLockInsertSafetyDuration, which is the optimization to insert timers without locking overhead.
-	// Default is 5 minute
+	// If the next timer is found, the timer's execute_at will trigger the next preload
+	// If the next timer is not found, next preload will be triggered after the MaxPreloadTimeDuration.
+	// When a new timer is inserted, if the timer is within the MaxLookAheadTimeDuration, it will update the next preload time.
+	// Because of shard movements (shard ownership is eventual consistent), it's recommended to not set this value too large. Because there could be edge cases where a timer is inserted to database by another instance (e.g. the current instance is waiting for a year as next preload time, but the shard is owned by another instance and a new timer of next hour is inserted, then ownership is transferred back to the current instance).
+	// This is also used to calculate the timer duration to insert without forwarding the request to the owner instance, which is the optimization to insert timers without locking overhead -- when the new timer's execute_at is greater than MaxPreloadTimeDuration + MaxLookAheadTimeDuration, it is safe to insert the timer without forwarding the request to the owner instance.
+	// Default is 1 minute
 	MaxLookAheadTimeDuration time.Duration
 	// BatchReadLimitPerRequest is the max number of timers to read from the database per request
 	// Default is 1000
 	BatchReadLimitPerRequest int
-	// NoLockInsertSafetyDuration is the duration to let other instances to insert timers into database without lock, without version check, and without forwarding the requests to the owner instance.
-	// If the execute_at is now() + MaxPreloadTimeDuration + MaxLookAheadTimeDuration + NoLockInsertSafetyDuration, it is safe to insert the timer into the database without lock.
-	// Default is 10 seconds
-	NoLockInsertSafetyDuration time.Duration
 }
 
 type TimerQueueConfig struct {
