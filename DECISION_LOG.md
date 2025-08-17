@@ -17,6 +17,25 @@ Each decision should include:
 
 ## Decisions
 
+### [Date: 2025-01-13] Timer Engine Configuration Restructuring and Default Values
+
+- **Context**: The timer engine configuration structure needed to be refined based on implementation experience and performance analysis. The original configuration had complex preloading mechanisms with multiple queue management settings that proved to be over-engineered. Simplified configuration is needed for better operational understanding and tuning.
+
+- **Decision**: Restructure the timer engine configuration with simplified and focused settings:
+  - **MinTimerDuration**: Changed default from 500ms to 1 second to handle time skew issues between instances during shard ownership changes
+  - **MaxCallbackTimeoutSeconds**: Renamed from `MaxiCallbackTimeoutSeconds` and kept 10 seconds default
+  - **EngineShutdownTimeout**: New field with 10 seconds default for overall engine shutdown
+  - **ShardEngineShutdownTimeout**: New field with 2 seconds default for individual shard engine shutdown
+  - **TimerBatchReaderConfig**: Completely restructured with `ReadBufferChannelSize` (default 10), `MinLookAheadTimeDuration` (default 1 second), `MaxLookAheadTimeDuration` (default 5 minutes), and `BatchReadLimitPerRequest` (default 1000)
+  - **TimerQueueConfig**: Simplified to single `QueueSize` field (default 3000) for memory management
+  - **CallbackProcessorConfig**: Reduced concurrency default from 2000 to 1000 for better resource management
+
+- **Rationale**: The 1-second minimum timer duration addresses critical race conditions during shard ownership changes where time skew between instances could cause timer deletion without execution. Simplified configuration reduces operational complexity while maintaining performance characteristics. The restructured TimerBatchReaderConfig provides clearer control over lookahead behavior and memory usage. Lower concurrency default prevents resource exhaustion while maintaining adequate throughput.
+
+- **Alternatives**: Keep complex preloading configuration, maintain higher concurrency defaults, use shorter minimum timer duration, implement dynamic configuration tuning
+
+- **Impact**: Improved operational safety with longer minimum timer duration preventing race conditions, simplified configuration management with clearer parameter meanings, better resource utilization with adjusted defaults, requires updates to existing configuration files and documentation. The simplified configuration makes the system easier to understand and tune for different deployment scenarios.
+
 ### [Date: 2025-07-30] Timer Engine Processing Strategy - Preload + Range Deletion
 
 - **Context**: Need to design the timer engine processing strategy for efficiently reading, executing, and deleting timers within a single shard. The engine must handle millions of timers per shard with high throughput (1M+ executions/second) while minimizing database load. Three approaches were evaluated: (1) Load only fired timers with small batches and adaptive wake-up, (2) Preload future timers with individual deletion, and (3) Preload future timers with range deletion for maximum efficiency.

@@ -71,7 +71,7 @@ type TimerBatchReaderConfig struct {
 	// ReadBufferChannelSize is the size of the read buffer channel.
 	// The channel is used to deliver the timers to the TimerQueue.
 	// Default is 10
-	ReadBufferChannelSize int
+	ReadBufferChannelSize *int
 	// MinLookAheadTimeDuration is the min time duration to look ahead.
 	// When reading timers from the database, it will read up to NOW()+MinLookAheadTimeDuration.
 	// But then filter the timers' execute_at to be less than or equal to NOW(). The first one that is greater than NOW() will be the next wake-up time.

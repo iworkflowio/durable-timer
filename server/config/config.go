@@ -38,9 +38,9 @@ func LoadConfigWithDefaults(configPath string) (*Config, error) {
 func setEngineDefaults(engine *EngineConfig) {
 	// Set default values based on comments in engine.go
 
-	// MinTimerDuration default is 500 ms
+	// MinTimerDuration default is 1 second
 	if engine.MinTimerDuration == 0 {
-		engine.MinTimerDuration = 500 * time.Millisecond
+		engine.MinTimerDuration = 1 * time.Second
 	}
 
 	// MaxTimerPayloadSizeInBytes default is 100 KB (100 * 1024 bytes)
@@ -48,9 +48,9 @@ func setEngineDefaults(engine *EngineConfig) {
 		engine.MaxTimerPayloadSizeInBytes = 100 * 1024
 	}
 
-	// MaxiCallbackTimeoutSeconds default is 10 seconds
-	if engine.MaxiCallbackTimeoutSeconds == 0 {
-		engine.MaxiCallbackTimeoutSeconds = 10
+	// MaxCallbackTimeoutSeconds default is 10 seconds
+	if engine.MaxCallbackTimeoutSeconds == 0 {
+		engine.MaxCallbackTimeoutSeconds = 10
 	}
 
 	// EngineShutdownTimeout default is 10 seconds
@@ -71,21 +71,16 @@ func setEngineDefaults(engine *EngineConfig) {
 }
 
 func setCallbackProcessorDefaults(config *CallbackProcessorConfig) {
-	// Concurrency default is 2000
+	// Concurrency default is 1000
 	if config.Concurrency == 0 {
-		config.Concurrency = 2000
+		config.Concurrency = 1000
 	}
 }
 
 func setTimerQueueDefaults(config *TimerQueueConfig) {
-	// ExpectedQueueSize default is 500
-	if config.ExpectedQueueSize == 0 {
-		config.ExpectedQueueSize = 500
-	}
-
-	// MaxQueueSizeToUnload default is 1000
-	if config.MaxQueueSizeToUnload == 0 {
-		config.MaxQueueSizeToUnload = 1000
+	// QueueSize default is 3000
+	if config.QueueSize == 0 {
+		config.QueueSize = 3000
 	}
 }
 
@@ -117,9 +112,20 @@ func setTimerBatchDeleterDefaults(config *TimerBatchDeleterConfig) {
 }
 
 func setTimerBatchReaderDefaults(config *TimerBatchReaderConfig) {
-	// MaxLookAheadTimeDuration default is 1 minutes
+	// ReadBufferChannelSize default is 10
+	if config.ReadBufferChannelSize == nil {
+		channelSize := 10
+		config.ReadBufferChannelSize = &channelSize
+	}
+
+	// MinLookAheadTimeDuration default is 1 second
+	if config.MinLookAheadTimeDuration == 0 {
+		config.MinLookAheadTimeDuration = 1 * time.Second
+	}
+
+	// MaxLookAheadTimeDuration default is 5 minutes
 	if config.MaxLookAheadTimeDuration == 0 {
-		config.MaxLookAheadTimeDuration = 1 * time.Minute
+		config.MaxLookAheadTimeDuration = 5 * time.Minute
 	}
 
 	// BatchReadLimitPerRequest default is 1000
