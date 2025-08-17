@@ -17,6 +17,17 @@ Each decision should include:
 
 ## Decisions
 
+### [Date: 2025-01-13] Revert UUID Splitting - Use Native UUID Types
+
+- **Context**: Previously decided to split 128-bit UUIDs into two 64-bit integers (`timer_uuid_high`, `timer_uuid_low`) to enable predictable cursor ordering for pagination support. However, the timer engine implementation no longer requires predictable UUID ordering and comparison capabilities for pagination, making the complexity of UUID splitting unnecessary.
+
+- **Decision**: Revert to using native UUID types across all database implementations. Replace split UUID fields with single native UUID fields: `timer_uuid UUID` (PostgreSQL), `timer_uuid BINARY(16)` (MySQL), `timer_uuid uuid` (Cassandra), native UUID Binary subtype 4 (MongoDB), and UUID string for DynamoDB. Remove UUID conversion logic and update all schemas, indexes, and query patterns to use single UUID fields.
+
+- **Rationale**: Native UUID types provide better data integrity with built-in validation, simpler schema management, and leverage database-specific UUID optimizations. The timer engine's pagination implementation has evolved to not require UUID-based ordering, eliminating the original justification for splitting UUIDs. Native UUID storage is the industry standard approach that reduces implementation complexity while maintaining full UUID functionality.
+
+- **Impact**: Simplified database schemas with single UUID field instead of two 64-bit integers, cleaner database access layer code without UUID splitting/joining logic, better performance through database-native UUID optimizations, easier maintenance and debugging with standard UUID representations. 
+
+
 ### [Date: 2025-01-13] Timer Engine Configuration Restructuring and Default Values
 
 - **Context**: The timer engine configuration structure needed to be refined based on implementation experience and performance analysis. The original configuration had complex preloading mechanisms with multiple queue management settings that proved to be over-engineered. Simplified configuration is needed for better operational understanding and tuning.
@@ -35,6 +46,7 @@ Each decision should include:
 - **Alternatives**: Keep complex preloading configuration, maintain higher concurrency defaults, use shorter minimum timer duration, implement dynamic configuration tuning
 
 - **Impact**: Improved operational safety with longer minimum timer duration preventing race conditions, simplified configuration management with clearer parameter meanings, better resource utilization with adjusted defaults, requires updates to existing configuration files and documentation. The simplified configuration makes the system easier to understand and tune for different deployment scenarios.
+
 
 ### [Date: 2025-07-30] Timer Engine Processing Strategy - Preload + Range Deletion
 

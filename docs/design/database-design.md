@@ -121,8 +121,7 @@ CREATE TABLE timers (
     shard_id            INT NOT NULL,              -- Partition key
     row_type            SMALLINT NOT NULL,         -- 1=shard, 2=timer  
     timer_execute_at    TIMESTAMP,                 -- Clustering key (timer rows only)
-    timer_uuid_high     BIGINT,                    -- UUID high 64 bits (timer rows only)
-    timer_uuid_low      BIGINT,                    -- UUID low 64 bits (timer rows only)
+    timer_uuid          UUID,                      -- Native UUID (timer rows only)
     
     -- Timer-specific fields (row_type = 2)
     timer_id            VARCHAR(255),              -- Business identifier
@@ -140,7 +139,7 @@ CREATE TABLE timers (
     shard_claimed_at    TIMESTAMP,                 -- When ownership was claimed
     shard_metadata      TEXT,                      -- Owner metadata (JSON)
     
-    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low)
+    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid)
 ) PARTITION BY HASH(shard_id);
 
 -- Indexes for efficient lookups
@@ -163,55 +162,26 @@ func generateTimerUUID(namespace, timerId string) string {
 }
 ```
 
-### UUID Storage for Pagination Support
+### UUID Storage Approach
 
-**Problem**: Timer pagination requires predictable cursor ordering based on `execute_at + timer_uuid`. When loading a page of timers, the engine needs to determine if a new timer with a given `(execute_at, timer_uuid)` falls within the current page's time window. Storing UUIDs as native UUID types loses the ability to make these predictable comparisons.
 
-**Solution**: Split the 128-bit UUID into two 64-bit integers for most databases, enabling predictable ordering and comparison operations required for cursor-based pagination.
+
+**Rationale**: Using native UUID types provides better data integrity, simpler schema management, and leverages database-specific UUID optimizations. The timer engine will handle pagination through other mechanisms that don't require UUID-based ordering.
 
 ### Database-Specific UUID Storage
 
 | Database | Storage Approach | Schema Fields |
 |----------|------------------|---------------|
-| **MySQL** | Split UUID into two BIGINT fields | `timer_uuid_high BIGINT`, `timer_uuid_low BIGINT` |
-| **PostgreSQL** | Split UUID into two BIGINT fields | `timer_uuid_high BIGINT`, `timer_uuid_low BIGINT` |
-| **MongoDB** | Split UUID into two 64-bit integers | `timer_uuid_high: NumberLong`, `timer_uuid_low: NumberLong` |
-| **Cassandra** | Split UUID into two BIGINT fields | `timer_uuid_high bigint`, `timer_uuid_low bigint` |
-| **DynamoDB** | Append UUID to execute_at timestamp | `timer_execute_at_with_uuid: "2025-01-01T10:00:00.000Z#550e8400-e29b-41d4-a716-446655440000"` |
+| **MySQL** | Native UUID type (BINARY(16)) | `timer_uuid BINARY(16)` |
+| **PostgreSQL** | Native UUID type | `timer_uuid UUID` |
+| **MongoDB** | Native UUID type (Binary subtype 4) | `timer_uuid: UUID("550e8400-e29b-41d4-a716-446655440000")` |
+| **Cassandra** | Native UUID type | `timer_uuid uuid` |
+| **DynamoDB** | UUID string in dedicated field | `timer_uuid: "550e8400-e29b-41d4-a716-446655440000"` |
 
-### UUID Conversion Logic
 
-```go
-// Convert UUID string to high/low 64-bit integers
-func uuidToHighLow(uuidStr string) (high, low int64, err error) {
-    uuid, err := gocql.ParseUUID(uuidStr)
-    if err != nil {
-        return 0, 0, err
-    }
-    
-    bytes := uuid.Bytes()
-    high = int64(binary.BigEndian.Uint64(bytes[0:8]))
-    low = int64(binary.BigEndian.Uint64(bytes[8:16]))
-    return high, low, nil
-}
 
-// Convert high/low integers back to UUID string
-func highLowToUUID(high, low int64) string {
-    bytes := make([]byte, 16)
-    binary.BigEndian.PutUint64(bytes[0:8], uint64(high))
-    binary.BigEndian.PutUint64(bytes[8:16], uint64(low))
-    uuid, _ := gocql.UUIDFromBytes(bytes)
-    return uuid.String()
-}
-```
+### DynamoDB UUID Approach
 
-### DynamoDB Special Case
-
-DynamoDB uses a different approach due to its key structure limitations:
-- **Composite Sort Key**: `timer_execute_at_with_uuid` combines timestamp and UUID
-- **Format**: `"2025-01-01T10:00:00.000Z#550e8400-e29b-41d4-a716-446655440000"`
-- **Benefits**: Native lexicographic ordering for pagination, single field for cursor operations
-- **Parsing**: Split on `#` character to extract timestamp and UUID components
 
 ### Database-Specific Upsert Behavior
 
@@ -266,8 +236,7 @@ CREATE TABLE timers (
     shard_id int,
     row_type smallint,           -- 1=shard, 2=timer
     timer_execute_at timestamp,  -- Clustering key (only for timer rows)
-    timer_uuid_high bigint,      -- UUID high 64 bits (only for timer rows)
-    timer_uuid_low bigint,       -- UUID low 64 bits (only for timer rows)
+    timer_uuid uuid,             -- Native UUID (only for timer rows)
     
     -- Timer-specific fields (row_type = 2)
     timer_id text,
@@ -286,8 +255,8 @@ CREATE TABLE timers (
     shard_metadata text,         -- JSON serialized
 
     
-    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low)
-) WITH CLUSTERING ORDER BY (row_type ASC, timer_execute_at ASC, timer_uuid_high ASC, timer_uuid_low ASC);
+    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid)
+) WITH CLUSTERING ORDER BY (row_type ASC, timer_execute_at ASC, timer_uuid ASC);
 
 -- Index for timer lookups by namespace and timer_id
 CREATE INDEX idx_timer_namespace_id ON timers (timer_namespace, timer_id);
@@ -328,8 +297,7 @@ SELECT * FROM timers WHERE shard_id = ? AND row_type = 2 AND timer_namespace = ?
   shard_id: NumberInt(286),
   row_type: NumberInt(2),           // 2 = timer record
   timer_execute_at: ISODate("2024-12-20T15:30:00Z"),
-  timer_uuid_high: NumberLong("6149277061003718656"),   // UUID high 64 bits
-  timer_uuid_low: NumberLong("-5083286817432248320"),   // UUID low 64 bits
+  timer_uuid: UUID("550e8400-e29b-41d4-a716-446655440000"),   // Native UUID
   
   // Timer-specific fields
   timer_id: "user-reminder-123", 
@@ -376,7 +344,7 @@ sh.enableSharding("timerservice")
 sh.shardCollection("timerservice.timers", {shard_id: 1})
 
 // Compound index optimized for timer execution queries
-db.timers.createIndex({shard_id: 1, row_type: 1, timer_execute_at: 1, timer_uuid_high: 1, timer_uuid_low: 1})
+db.timers.createIndex({shard_id: 1, row_type: 1, timer_execute_at: 1, timer_uuid: 1})
 
 // Index for timer CRUD operations
 db.timers.createIndex({shard_id: 1, row_type: 1, timer_namespace: 1, timer_id: 1}, {
@@ -593,8 +561,7 @@ CREATE TABLE timers (
     shard_id INT NOT NULL,
     row_type SMALLINT NOT NULL,        -- 1=shard, 2=timer
     timer_execute_at TIMESTAMP(3),     -- Clustering key (timer rows only)
-    timer_uuid_high BIGINT,            -- UUID high 64 bits (timer rows only)
-    timer_uuid_low BIGINT,             -- UUID low 64 bits (timer rows only)
+    timer_uuid BINARY(16),             -- Native UUID as binary (timer rows only)
     
     -- Timer-specific fields (row_type = 2)
     timer_id VARCHAR(255),
@@ -612,7 +579,7 @@ CREATE TABLE timers (
     shard_claimed_at TIMESTAMP(3),
     shard_metadata JSON,
     
-    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low),  -- Clustered by default in MySQL
+    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid),  -- Clustered by default in MySQL
     UNIQUE INDEX idx_timer_lookup (shard_id, row_type, timer_namespace, timer_id)
 ) PARTITION BY HASH(shard_id) PARTITIONS 32;
 ```
@@ -651,8 +618,7 @@ CREATE TABLE timers (
     shard_id INTEGER NOT NULL,
     row_type SMALLINT NOT NULL,        -- 1=shard, 2=timer
     timer_execute_at TIMESTAMP(3),     -- Clustering key (timer rows only)
-    timer_uuid_high BIGINT,            -- UUID high 64 bits (timer rows only)
-    timer_uuid_low BIGINT,             -- UUID low 64 bits (timer rows only)
+    timer_uuid UUID,                   -- Native UUID type (timer rows only)
     
     -- Timer-specific fields (row_type = 2)
     timer_id VARCHAR(255),
@@ -670,7 +636,7 @@ CREATE TABLE timers (
     shard_claimed_at TIMESTAMP(3),
     shard_metadata JSONB,
     
-    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low)
+    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid)
 ) PARTITION BY HASH (shard_id);
 
 -- Create partitions (example for 32 partitions)
