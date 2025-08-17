@@ -41,8 +41,18 @@ type TimerQueue interface {
 	// 2. Sort the timers by execute_at in a priority queue(the reads from DB is sorted by there may be new timers inserted anytime)
 	// 3. Wait for the next timer to be ready to be processed, and pass it to CallbackProcessor
 	// 4. Use a list to maintain the timers passed to the CallbackProcessor (once they pop from the prioty queue) 
-	// 5. Have a background thread to check the timers that are completed and remove them from the list, and send signal to TimerBatchDeleter to delete the timers from database
+	// 5. Have a background thread to check the timers that are completed and remove them from the list, and send notification signals to TimerBatchDeleter to delete the timers from database
 	Close() error
+}
+
+func NewTimerQueue(
+	config *config.Config, shardId int, 
+	loadingChannel chan<- genapi.Timer, // the channel to pass the timers to be loaded into the queue
+	queueSizeNotificationChannel <-chan int, // the channel to notify the queue size changes 
+	committedOffsetNotificationChannel <-chan int, // the channel to notify the committed offset changes
+	) (TimerQueue, error) {
+	// TODO: implement
+	return nil, nil
 }
 
 // TimerCallbackTaskCompletion is the function to be executed when the callback is completed
