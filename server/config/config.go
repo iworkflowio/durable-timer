@@ -117,17 +117,6 @@ func setTimerBatchDeleterDefaults(config *TimerBatchDeleterConfig) {
 }
 
 func setTimerBatchReaderDefaults(config *TimerBatchReaderConfig) {
-	// QueueAvailableThresholdToLoad default is 0.5
-	if config.QueueAvailableThresholdToLoad == 0 {
-		config.QueueAvailableThresholdToLoad = 0.5
-	}
-
-	// MaxPreloadTimeDuration default is 1 minute
-	if config.MaxPreloadTimeDuration == nil {
-		duration := 1 * time.Minute
-		config.MaxPreloadTimeDuration = &duration
-	}
-
 	// MaxLookAheadTimeDuration default is 1 minutes
 	if config.MaxLookAheadTimeDuration == 0 {
 		config.MaxLookAheadTimeDuration = 1 * time.Minute
