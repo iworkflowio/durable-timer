@@ -53,9 +53,14 @@ func setEngineDefaults(engine *EngineConfig) {
 		engine.MaxiCallbackTimeoutSeconds = 10
 	}
 
-	// ShutdownTimeout default is 2 seconds
-	if engine.ShutdownTimeout == 0 {
-		engine.ShutdownTimeout = 2 * time.Second
+	// EngineShutdownTimeout default is 10 seconds
+	if engine.EngineShutdownTimeout == 0 {
+		engine.EngineShutdownTimeout = 10 * time.Second
+	}
+
+	// ShardEngineShutdownTimeout default is 2 seconds
+	if engine.ShardEngineShutdownTimeout == 0 {
+		engine.ShardEngineShutdownTimeout = 2 * time.Second
 	}
 
 	// Set defaults for nested configs

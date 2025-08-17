@@ -19,9 +19,13 @@ type EngineConfig struct {
 	// Default is 10 seconds
 	MaxiCallbackTimeoutSeconds int
 
-	// ShutdownTimeout is the timeout to shutdown the engine
+	// EngineShutdownTimeout is the timeout to shutdown the engine
+	// Default is 10 seconds
+	EngineShutdownTimeout time.Duration
+
+	// ShardEngineShutdownTimeout is the timeout to shutdown the shard engine
 	// Default is 2 seconds
-	ShutdownTimeout time.Duration
+	ShardEngineShutdownTimeout time.Duration
 
 	// CallbackProcessorConfig is the config for the CallbackProcessor
 	// Note that callback processor is a singleton instance for the whole Engine
