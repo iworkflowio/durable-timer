@@ -2,6 +2,7 @@ package engine
 
 import (
 	"github.com/iworkflowio/durable-timer/config"
+	"github.com/iworkflowio/durable-timer/databases"
 	genapi "github.com/iworkflowio/durable-timer/genapi/go"
 )
 
@@ -16,7 +17,7 @@ type TimerEngine interface {
 	UpdateTimer(request *genapi.UpdateTimerRequest) error
 }
 
-func NewTimerEngine(config *config.Config) (TimerEngine, error) {
+func NewTimerEngine(config *config.Config, store databases.TimerStore) (TimerEngine, error) {
 	// TODO: implement
 	return nil, nil
 }
@@ -30,7 +31,7 @@ type TimerEngineForShard interface {
 	UpdateTimer(request *genapi.UpdateTimerRequest) error
 }
 
-func NewTimerEngineForShard(config *config.Config, shardId int) (TimerEngineForShard, error) {
+func NewTimerEngineForShard(config *config.Config, shardId int, store databases.TimerStore) (TimerEngineForShard, error) {
 	// TODO: implement
 	return nil, nil
 }
@@ -40,31 +41,38 @@ type TimerQueue interface {
 	// 1. Responsible for storing the timers into memory to be processed
 	// 2. Sort the timers by execute_at in a priority queue(the reads from DB is sorted by there may be new timers inserted anytime)
 	// 3. Wait for the next timer to be ready to be processed, and pass it to CallbackProcessor
-	// 4. Use a list to maintain the timers passed to the CallbackProcessor (once they pop from the prioty queue) 
+	// 4. Use a list to maintain the timers passed to the CallbackProcessor (once they pop from the prioty queue)
 	// 5. Have a background thread to check the timers that are completed and remove them from the list, and send notification signals to TimerBatchDeleter to delete the timers from database
 	Close() error
 }
 
 func NewTimerQueue(
-	config *config.Config, shardId int, 
-	loadingChannel chan<- genapi.Timer, // the channel to pass the timers to be loaded into the queue
-	queueSizeNotificationChannel <-chan int, // the channel to notify the queue size changes 
-	committedOffsetNotificationChannel <-chan int, // the channel to notify the committed offset changes
-	) (TimerQueue, error) {
+	config *config.Config, shardId int,
+	loadingChannel <-chan *genapi.Timer, // the receive-only channel to pass the timers to be loaded into the queue
+	queueSizeNotificationChannel chan<- int, // the send-only channel to notify the queue size changes
+	committedOffsetNotificationChannel chan<- int, // the send-only channel to notify the committed offset changes
+	firedTimerChannel chan<- *genapi.Timer, // the send-only channel to send the fired timer to the callback processor
+	completedTimerChannel <-chan *genapi.Timer, // the receive-only channel to receive the completed timer from the callback processor
+) (TimerQueue, error) {
 	// TODO: implement
 	return nil, nil
 }
-
-// TimerCallbackTaskCompletion is the function to be executed when the callback is completed
-type TimerCallbackTaskCompletion func()
 
 type CallbackProcessor interface {
 	// 0. This should be a singleton instance for the whole Engine
 	// 1. Responsible for processing the callback of the timers
 	// 2. Listen to TimerQueue to get the timers to process
 	// 3. Concurrently process timers using a thread pool
-	// 4. Execute the TimerCallbackTaskCompletion when the callback is completed
+	// 4. Send the completed timer to the completedTimerChannel
 	Close() error
+}
+
+func NewCallbackProcessor(config *config.Config,
+	firedTimerChannel <-chan *genapi.Timer,
+	completedTimerChannel chan<- *genapi.Timer,
+) (CallbackProcessor, error) {
+	// TODO: implement
+	return nil, nil
 }
 
 type TimerBatchReader interface {
