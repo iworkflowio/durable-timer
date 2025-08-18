@@ -22,7 +22,8 @@ type MySQLTimerStore struct {
 
 // NewMySQLTimerStore creates a new MySQL timer store
 func NewMySQLTimerStore(config *config.MySQLConnectConfig) (databases.TimerStore, error) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?parseTime=true&loc=UTC",
+	// NOTE: use clientFoundRows=true so that the number of rows affected returned is actually number of row matched (the default behavior in PostgreSQL)
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?parseTime=true&loc=UTC&clientFoundRows=true",
 		config.Username, config.Password, config.Host, config.Database)
 
 	db, err := sql.Open("mysql", dsn)
@@ -198,10 +199,10 @@ func (m *MySQLTimerStore) UpdateShardMetadata(
 	zeroUuid := databases.ZeroUUID
 
 	// Use conditional update to update shard metadata only if the shard version matches
-	updateQuery := `UPDATE timers SET shard_metadata = ?, shard_updated_at = ?
+	updateQuery := `UPDATE timers SET shard_metadata = ?
 	                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? AND shard_version = ?`
 
-	result, updateErr := m.db.ExecContext(ctx, updateQuery, string(metadataJSON), time.Now().UTC(), shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid[:], shardVersion)
+	result, updateErr := m.db.ExecContext(ctx, updateQuery, string(metadataJSON), shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid[:], shardVersion)
 	if updateErr != nil {
 		return databases.NewGenericDbError("failed to update shard metadata", updateErr)
 	}

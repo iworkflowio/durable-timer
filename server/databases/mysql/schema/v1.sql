@@ -12,7 +12,6 @@ CREATE TABLE timers (
     shard_version BIGINT,
     shard_owner_addr VARCHAR(255),
     shard_claimed_at TIMESTAMP(3),
-    shard_updated_at TIMESTAMP(3), -- for optimistic locking(because mysql doesn't distinguish between changes and matches)
     shard_metadata JSON,
     timer_created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     timer_attempts INT NOT NULL DEFAULT 0,

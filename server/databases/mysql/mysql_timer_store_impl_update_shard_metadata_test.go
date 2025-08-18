@@ -208,3 +208,46 @@ func TestUpdateShardMetadata_ConcurrentUpdate(t *testing.T) {
 	assert.NotNil(t, updateErr2)
 	assert.True(t, updateErr2.ShardConditionFail)
 }
+
+func TestUpdateShardMetadata_IdenticalValues(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 6
+	ownerAddr := "test-owner"
+
+	// First claim a shard to create it
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	assert.Nil(t, err)
+	assert.NotNil(t, currentShardInfo)
+	assert.Equal(t, int64(1), currentShardInfo.ShardVersion)
+
+	// Define metadata to update
+	testUuid := uuid.New()
+	testTime := time.Now().UTC().Truncate(time.Millisecond) // Truncate to millisecond precision
+	metadata := databases.ShardMetadata{
+		CommittedOffsetTimestamp: testTime,
+		CommittedOffsetUuid:      testUuid,
+	}
+
+	// First update with the metadata
+	updateErr1 := store.UpdateShardMetadata(ctx, shardId, currentShardInfo.ShardVersion, metadata)
+	assert.Nil(t, updateErr1)
+
+	// Now update with EXACTLY the same metadata values (should succeed with clientFoundRows=true)
+	// This tests the behavior where MySQL would normally return 0 rows affected (no changes),
+	// but with clientFoundRows=true it returns 1 row affected (row matched the WHERE clause)
+	updateErr2 := store.UpdateShardMetadata(ctx, shardId, currentShardInfo.ShardVersion, metadata)
+	assert.Nil(t, updateErr2, "Update with identical values should succeed when clientFoundRows=true")
+
+	// Verify the metadata remains the same by claiming and checking
+	prev, current, claimErr := store.ClaimShardOwnership(ctx, shardId, "new-owner")
+	assert.Nil(t, claimErr)
+	assert.NotNil(t, prev)
+	assert.NotNil(t, current)
+
+	// The previous shard info should still have the same metadata
+	assert.Equal(t, metadata.CommittedOffsetUuid, prev.Metadata.CommittedOffsetUuid)
+	assert.Equal(t, metadata.CommittedOffsetTimestamp, prev.Metadata.CommittedOffsetTimestamp)
+}

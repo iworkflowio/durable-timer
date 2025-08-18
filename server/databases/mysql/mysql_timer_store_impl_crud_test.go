@@ -583,3 +583,83 @@ func TestUpdateTimer_NonNilToNil(t *testing.T) {
 	assert.Nil(t, retrievedTimer.Payload)
 	assert.Nil(t, retrievedTimer.RetryPolicy)
 }
+
+func TestUpdateTimer_IdenticalValues(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 1
+	namespace := "test_namespace"
+
+	// Create shard record
+	ownerAddr := "owner-1"
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	require.Nil(t, err)
+	shardVersion := currentShardInfo.ShardVersion
+
+	// Create original timer
+	now := time.Now().UTC().Truncate(time.Millisecond) // Truncate to millisecond precision for MySQL
+	executeAt := now.Add(10 * time.Minute)
+	timer := &databases.DbTimer{
+		Id:                     "test-timer-identical",
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "test-timer-identical"),
+		Namespace:              namespace,
+		ExecuteAt:              executeAt,
+		CallbackUrl:            "https://example.com/callback",
+		CallbackTimeoutSeconds: 30,
+		CreatedAt:              now,
+		Payload:                map[string]interface{}{"version": "1", "data": "test"},
+		RetryPolicy:            map[string]interface{}{"maxAttempts": 3, "strategy": "linear"},
+	}
+
+	// Insert the timer
+	createErr := store.CreateTimer(ctx, shardId, shardVersion, namespace, timer)
+	require.Nil(t, createErr)
+
+	// First update with some different values
+	updateRequest1 := &databases.UpdateDbTimerRequest{
+		TimerId:                "test-timer-identical",
+		ExecuteAt:              executeAt,
+		CallbackUrl:            "https://updated.com/callback",
+		CallbackTimeoutSeconds: 60,
+		Payload:                map[string]interface{}{"version": "2", "updated": true},
+		RetryPolicy:            map[string]interface{}{"maxAttempts": 5, "strategy": "exponential"},
+	}
+
+	updateErr1 := store.UpdateTimer(ctx, shardId, shardVersion, namespace, updateRequest1)
+	require.Nil(t, updateErr1)
+
+	// Now update with EXACTLY the same values as the previous update (should succeed with clientFoundRows=true)
+	// This tests the behavior where MySQL would normally return 0 rows affected (no changes),
+	// but with clientFoundRows=true it returns 1 row affected (row matched the WHERE clause)
+	updateRequest2 := &databases.UpdateDbTimerRequest{
+		TimerId:                "test-timer-identical",
+		ExecuteAt:              executeAt, // Same values as updateRequest1
+		CallbackUrl:            "https://updated.com/callback",
+		CallbackTimeoutSeconds: 60,
+		Payload:                map[string]interface{}{"version": "2", "updated": true},
+		RetryPolicy:            map[string]interface{}{"maxAttempts": 5, "strategy": "exponential"},
+	}
+
+	updateErr2 := store.UpdateTimer(ctx, shardId, shardVersion, namespace, updateRequest2)
+	require.Nil(t, updateErr2, "Update with identical values should succeed when clientFoundRows=true")
+
+	// Verify the timer values remain the same
+	retrievedTimer, getErr := store.GetTimer(ctx, shardId, namespace, timer.Id)
+	require.Nil(t, getErr)
+	require.NotNil(t, retrievedTimer)
+
+	// Verify all fields match the last update
+	assert.Equal(t, updateRequest2.CallbackUrl, retrievedTimer.CallbackUrl)
+	assert.Equal(t, updateRequest2.CallbackTimeoutSeconds, retrievedTimer.CallbackTimeoutSeconds)
+	assert.Equal(t, updateRequest2.ExecuteAt, retrievedTimer.ExecuteAt)
+	assert.Equal(t, int32(0), retrievedTimer.Attempts) // Should be reset to 0 after update
+
+	// Verify JSON payload and retry policy
+	// Note: JSON unmarshaling converts numbers to float64 by default
+	expectedPayload := map[string]interface{}{"version": "2", "updated": true}
+	expectedRetryPolicy := map[string]interface{}{"maxAttempts": float64(5), "strategy": "exponential"}
+	assert.Equal(t, expectedPayload, retrievedTimer.Payload)
+	assert.Equal(t, expectedRetryPolicy, retrievedTimer.RetryPolicy)
+}
