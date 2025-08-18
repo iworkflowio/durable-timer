@@ -189,11 +189,11 @@ func (p *PostgreSQLTimerStore) UpdateShardMetadata(
 	}
 
 	// Update shard metadata using optimistic concurrency control
-	updateQuery := `UPDATE timers SET shard_metadata = $1, shard_updated_at = $2
-	                WHERE shard_id = $3 AND row_type = $4 AND timer_execute_at = $5 AND timer_uuid = $6 AND shard_version = $7`
+	updateQuery := `UPDATE timers SET shard_metadata = $1
+	                WHERE shard_id = $2 AND row_type = $3 AND timer_execute_at = $4 AND timer_uuid = $5 AND shard_version = $6`
 
 	result, updateErr := p.db.ExecContext(ctx, updateQuery,
-		string(metadataJSON), time.Now().UTC(), shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid, shardVersion)
+		string(metadataJSON), shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid, shardVersion)
 
 	if updateErr != nil {
 		return databases.NewGenericDbError("failed to update shard metadata", updateErr)
