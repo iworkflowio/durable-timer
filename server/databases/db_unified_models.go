@@ -82,6 +82,9 @@ type (
 		Attempts int32
 	}
 
+	// RangeGetTimersRequest is the request to get timers from a range of timestamps
+	// Start is exclusive, End is inclusive 
+	// TODO fix this behavior, current is both inclusive
 	RangeGetTimersRequest struct {
 		StartTimestamp time.Time
 		StartTimeUuid  uuid.UUID

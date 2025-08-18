@@ -64,6 +64,8 @@ type ShadOwnership interface {
 	// UpdateShardMetadata updates the shard metadata
 	// The ownership is lost, this will return an error
 	UpdateShardMetadata(ctx context.Context, metadata *databases.ShardMetadata) error
+	// GetCurrentShardMetadata returns the current shard metadata
+	GetCurrentShardMetadata() databases.ShardMetadata
 	// ReleaseOwnership releases the shard ownership
 	ReleaseOwnership()
 }
@@ -105,10 +107,10 @@ func NewTimerBatchReader(
 	config *config.Config, logger log.Logger,
 	shard ShadOwnership,
 	loadingBufferChannel chan<- *databases.DbTimer, // send-only channel to pass the timers to the timer queue
+	newTimerChannel <- chan time.Time, // the receive-only channel to receive the newly inserted timer that could be the next wake-up time
 	store databases.TimerStore,
 ) (TimerBatchReader, error) {
-	// TODO: implement
-	return nil, nil
+	return newBatchReaderImpl(config, logger, shard, loadingBufferChannel, newTimerChannel, store)
 }
 
 // TimerBatchDeleter should be one instance per shard

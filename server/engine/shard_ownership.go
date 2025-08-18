@@ -13,11 +13,14 @@ type shardOwnershipImpl struct {
 	logger log.Logger
 	store  databases.TimerStore
 
-	shardId      int
-	shardVersion int64
-	closeChan    chan struct{}
+	shardId       int
+	shardVersion  int64
+	shardMetadata databases.ShardMetadata
+
+	closeChan     chan struct{}
 	closeChanOnce func()
 }
+
 
 
 func newShardOwnershipImpl(
@@ -36,17 +39,18 @@ func newShardOwnershipImpl(
 	logger.Info("Claimed shard ownership", tag.ShardId(shardId), tag.Current(currentShardInfo), tag.Prev(prevShardInfo))
 
 	closeChan := make(chan struct{})
-	// safely close the channel once 
+	// safely close the channel once
 	var once sync.Once
-	closeChanOnce := func(){ once.Do( func(){ close(closeChan) }) }
+	closeChanOnce := func() { once.Do(func() { close(closeChan) }) }
 
 	return &shardOwnershipImpl{
 		logger: logger,
 		store:  store,
 
-		shardId:      shardId,
-		shardVersion: currentShardInfo.ShardVersion,
-		closeChan:    closeChan,
+		shardId:       shardId,
+		shardVersion:  currentShardInfo.ShardVersion,
+		shardMetadata: currentShardInfo.Metadata,
+		closeChan:     closeChan,
 		closeChanOnce: closeChanOnce,
 	}, nil
 }
@@ -61,6 +65,11 @@ func (s *shardOwnershipImpl) GetShardId() int {
 	return s.shardId
 }
 
+// GetCurrentShardMetadata implements ShadOwnership.
+func (s *shardOwnershipImpl) GetCurrentShardMetadata() databases.ShardMetadata {
+	return s.shardMetadata
+}
+
 // UpdateShardMetadata implements ShadOwnership.
 func (s *shardOwnershipImpl) UpdateShardMetadata(ctx context.Context, metadata *databases.ShardMetadata) error {
 	updateErr := s.store.UpdateShardMetadata(ctx, s.shardId, s.shardVersion, *metadata)
@@ -73,6 +82,8 @@ func (s *shardOwnershipImpl) UpdateShardMetadata(ctx context.Context, metadata *
 		}
 		return updateErr
 	}
+
+	s.shardMetadata = *metadata
 
 	s.logger.Info("Updated shard metadata", tag.ShardId(s.shardId), tag.Value(metadata))
 	return nil

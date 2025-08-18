@@ -39,6 +39,7 @@ func newBatchDeleterImpl(
 
 // Close implements TimerBatchDeleter.
 func (b *batchDeleterImpl) Close() error {
+	b.logger.Info("Closing batch deleter")
 	close(b.closeChan)
 	return nil
 }
