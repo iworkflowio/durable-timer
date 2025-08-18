@@ -82,6 +82,12 @@ func setTimerQueueDefaults(config *TimerQueueConfig) {
 	if config.QueueSize == 0 {
 		config.QueueSize = 3000
 	}
+
+	// LoadingBufferChannelSize default is 10
+	if config.LoadingBufferChannelSize == nil {
+		channelSize := 10
+		config.LoadingBufferChannelSize = &channelSize
+	}
 }
 
 func setTimerBatchDeleterDefaults(config *TimerBatchDeleterConfig) {
@@ -112,12 +118,6 @@ func setTimerBatchDeleterDefaults(config *TimerBatchDeleterConfig) {
 }
 
 func setTimerBatchReaderDefaults(config *TimerBatchReaderConfig) {
-	// ReadBufferChannelSize default is 10
-	if config.ReadBufferChannelSize == nil {
-		channelSize := 10
-		config.ReadBufferChannelSize = &channelSize
-	}
-
 	// MinLookAheadTimeDuration default is 1 second
 	if config.MinLookAheadTimeDuration == 0 {
 		config.MinLookAheadTimeDuration = 1 * time.Second

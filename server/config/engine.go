@@ -68,10 +68,6 @@ type TimerBatchDeleterConfig struct {
 // TimerBatchReaderConfig is the config for the TimerBatchReader
 // Note that timer batch reader is one instance per shard
 type TimerBatchReaderConfig struct {
-	// ReadBufferChannelSize is the size of the read buffer channel.
-	// The channel is used to deliver the timers to the TimerQueue.
-	// Default is 10
-	ReadBufferChannelSize *int
 	// MinLookAheadTimeDuration is the min time duration to look ahead.
 	// When reading timers from the database, it will read up to NOW()+MinLookAheadTimeDuration.
 	// But then filter the timers' execute_at to be less than or equal to NOW(). The first one that is greater than NOW() will be the next wake-up time.
@@ -95,6 +91,11 @@ type TimerQueueConfig struct {
 	// The memory consumption of the queue is QueueSize * MaxTimerPayloadSizeInBytes
 	// Default is 3000, meaning the default memory consumption is 3000 * 100KB = 300MB for this timer queue
 	QueueSize int
+	// LoadingBufferChannelSize is the size of the loading buffer channel.
+	// The channel is used to deliver the timers to the TimerQueue from the batch readers
+	// This is to avoid the batch readers to be blocked by the timer queue.
+	// Default is 10. 
+	LoadingBufferChannelSize *int
 }
 
 // CallbackProcessorConfig is the config for the CallbackProcessor
