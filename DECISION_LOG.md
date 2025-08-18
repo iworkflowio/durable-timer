@@ -17,7 +17,7 @@ Each decision should include:
 
 ## Decisions
 
-### [Date: 2025-01-13] Revert UUID Splitting - Use Native UUID Types
+### [Date: 2025-08-17] Revert UUID Splitting - Use Native UUID Types
 
 - **Context**: Previously decided to split 128-bit UUIDs into two 64-bit integers (`timer_uuid_high`, `timer_uuid_low`) to enable predictable cursor ordering for pagination support. However, the timer engine implementation no longer requires predictable UUID ordering and comparison capabilities for pagination, making the complexity of UUID splitting unnecessary.
 
@@ -28,7 +28,7 @@ Each decision should include:
 - **Impact**: Simplified database schemas with single UUID field instead of two 64-bit integers, cleaner database access layer code without UUID splitting/joining logic, better performance through database-native UUID optimizations, easier maintenance and debugging with standard UUID representations. 
 
 
-### [Date: 2025-01-13] Timer Engine Configuration Restructuring and Default Values
+### [Date: 2025-08-17] Timer Engine Configuration Restructuring and Default Values
 
 - **Context**: The timer engine configuration structure needed to be refined based on implementation experience and performance analysis. The original configuration had complex preloading mechanisms with multiple queue management settings that proved to be over-engineered. Simplified configuration is needed for better operational understanding and tuning.
 

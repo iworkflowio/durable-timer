@@ -2,30 +2,11 @@ package databases
 
 import (
 	"crypto/md5"
-	"encoding/binary"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 )
-
-// UuidToHighLow converts a UUID to high and low 64-bit integers
-// for predictable pagination ordering across databases.
-func UuidToHighLow(uuid uuid.UUID) (high, low int64) {
-
-	high = int64(binary.BigEndian.Uint64(uuid[0:8]))
-	low = int64(binary.BigEndian.Uint64(uuid[8:16]))
-	return high, low
-}
-
-// HighLowToUuid converts high and low 64-bit integers back to a UUID string
-func HighLowToUuid(high, low int64) uuid.UUID {
-	bytes := make([]byte, 16)
-	binary.BigEndian.PutUint64(bytes[0:8], uint64(high))
-	binary.BigEndian.PutUint64(bytes[8:16], uint64(low))
-	uuid, _ := uuid.FromBytes(bytes)
-	return uuid
-}
 
 // GenerateTimerUUID creates a stable UUID from timer namespace and ID for consistent upsert behavior
 func GenerateTimerUUID(namespace, timerId string) uuid.UUID {

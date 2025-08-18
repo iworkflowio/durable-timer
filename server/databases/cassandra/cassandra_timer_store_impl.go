@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gocql/gocql"
+	"github.com/google/uuid"
 	"github.com/iworkflowio/durable-timer/config"
 	"github.com/iworkflowio/durable-timer/databases"
 )
@@ -48,8 +49,8 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	shardId int,
 	ownerAddr string,
 ) (prevShardInfo, currentShardInfo *databases.ShardInfo, err *databases.DbError) {
-	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for shard records - convert to gocql.UUID for Cassandra
+	zeroUuid, _ := gocql.UUIDFromBytes(databases.ZeroUUID[:])
 
 	now := time.Now().UTC()
 	// When CAS fails, Cassandra returns the existing row values
@@ -79,10 +80,10 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 			return nil, nil, databases.NewGenericDbError("failed to marshal default metadata", marshalErr)
 		}
 
-		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, shard_version, shard_owner_addr, shard_claimed_at, shard_metadata) 
-		                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`
+		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, shard_version, shard_owner_addr, shard_claimed_at, shard_metadata) 
+		                VALUES (?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`
 
-		applied, insertErr := c.session.Query(insertQuery, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, newVersion, ownerAddr, now, string(metadataJSON)).
+		applied, insertErr := c.session.Query(insertQuery, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid, newVersion, ownerAddr, now, string(metadataJSON)).
 			WithContext(ctx).MapScanCAS(previous)
 
 		if insertErr != nil {
@@ -126,10 +127,10 @@ func (c *CassandraTimerStore) ClaimShardOwnership(
 	newVersion := currentVersion + 1
 
 	updateQuery := `UPDATE timers SET shard_version = ?, shard_owner_addr = ?, shard_claimed_at = ?
-	                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
+	                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF shard_version = ?`
 
 	applied, updateErr := c.session.Query(updateQuery, newVersion, ownerAddr, now,
-		shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, currentVersion).
+		shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid, currentVersion).
 		WithContext(ctx).MapScanCAS(previous)
 
 	if updateErr != nil {
@@ -158,8 +159,8 @@ func (c *CassandraTimerStore) UpdateShardMetadata(
 	shardId int, shardVersion int64,
 	metadata databases.ShardMetadata,
 ) (err *databases.DbError) {
-	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for shard records - convert to gocql.UUID for Cassandra
+	zeroUuid, _ := gocql.UUIDFromBytes(databases.ZeroUUID[:])
 
 	// Marshal metadata to JSON
 	metadataJSON, marshalErr := json.Marshal(metadata)
@@ -168,11 +169,11 @@ func (c *CassandraTimerStore) UpdateShardMetadata(
 	}
 
 	// Use LWT to update shard metadata only if the shard version matches
-	updateQuery := `UPDATE timers SET shard_metadata = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
+	updateQuery := `UPDATE timers SET shard_metadata = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF shard_version = ?`
 
 	// Create a logged batch for the LWT operation
 	batch := c.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
-	batch.Query(updateQuery, string(metadataJSON), shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
+	batch.Query(updateQuery, string(metadataJSON), shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid, shardVersion)
 
 	// When CAS fails, Cassandra returns the existing row values
 	previous := make(map[string]interface{})
@@ -194,11 +195,11 @@ func (c *CassandraTimerStore) UpdateShardMetadata(
 }
 
 func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	// Convert the provided timer UUID to high/low format for predictable pagination
-	timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timer.TimerUuid)
+	// Use the provided timer UUID - convert to gocql.UUID for Cassandra
+	timerUuid, _ := gocql.UUIDFromBytes(timer.TimerUuid[:])
 
-	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for shard records - convert to gocql.UUID for Cassandra
+	zeroUuid, _ := gocql.UUIDFromBytes(databases.ZeroUUID[:])
 
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON string
@@ -223,17 +224,16 @@ func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shar
 	batch := c.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
 
 	// Add shard version check to batch - update shard version to same value to verify it matches
-	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
-	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
+	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF shard_version = ?`
+	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid, shardVersion)
 
 	// Add timer insertion to batch
-	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	batch.Query(insertQuery,
 		shardId,
 		databases.RowTypeTimer,
 		timer.ExecuteAt,
-		timerUuidHigh,
-		timerUuidLow,
+		timerUuid,
 		timer.Id,
 		timer.Namespace,
 		timer.CallbackUrl,
@@ -269,8 +269,8 @@ func (c *CassandraTimerStore) CreateTimer(ctx context.Context, shardId int, shar
 }
 
 func (c *CassandraTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	// Convert the provided timer UUID to high/low format for predictable pagination
-	timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timer.TimerUuid)
+	// Use the provided timer UUID - convert to gocql.UUID for Cassandra
+	timerUuid, _ := gocql.UUIDFromBytes(timer.TimerUuid[:])
 
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON string
@@ -292,14 +292,13 @@ func (c *CassandraTimerStore) CreateTimerNoLock(ctx context.Context, shardId int
 	}
 
 	// Insert the timer directly without any locking or version checking
-	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	insertErr := c.session.Query(insertQuery,
 		shardId,
 		databases.RowTypeTimer,
 		timer.ExecuteAt,
-		timerUuidHigh,
-		timerUuidLow,
+		timerUuid,
 		timer.Id,
 		timer.Namespace,
 		timer.CallbackUrl,
@@ -318,26 +317,26 @@ func (c *CassandraTimerStore) CreateTimerNoLock(ctx context.Context, shardId int
 }
 
 func (c *CassandraTimerStore) RangeGetTimers(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
-	// Convert start and end UUIDs to high/low format for precise range selection
-	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
-	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+	// Use start and end UUIDs - convert to gocql.UUID for Cassandra
+	startUuid, _ := gocql.UUIDFromBytes(request.StartTimeUuid[:])
+	endUuid, _ := gocql.UUIDFromBytes(request.EndTimeUuid[:])
 
 	// Query timers in the specified range, ordered by execution time and UUID
-	query := `SELECT shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low,
+	query := `SELECT shard_id, row_type, timer_execute_at, timer_uuid,
 	                 timer_id, timer_namespace, timer_callback_url, timer_payload, 
 	                 timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts
 	          FROM timers 
 	          WHERE shard_id = ? AND row_type = ? 
-	            AND (timer_execute_at, timer_uuid_high, timer_uuid_low) >= (?, ?, ?)
-	            AND (timer_execute_at, timer_uuid_high, timer_uuid_low) <= (?, ?, ?)
-	          ORDER BY timer_execute_at ASC, timer_uuid_high ASC, timer_uuid_low ASC
+	            AND (timer_execute_at, timer_uuid) >= (?, ?)
+	            AND (timer_execute_at, timer_uuid) <= (?, ?)
+	          ORDER BY timer_execute_at ASC, timer_uuid ASC
 	          LIMIT ?`
 
 	iter := c.session.Query(query,
 		shardId,
 		databases.RowTypeTimer,
-		request.StartTimestamp, startUuidHigh, startUuidLow,
-		request.EndTimestamp, endUuidHigh, endUuidLow,
+		request.StartTimestamp, startUuid,
+		request.EndTimestamp, endUuid,
 		request.Limit).Iter()
 
 	var timers []*databases.DbTimer
@@ -345,8 +344,7 @@ func (c *CassandraTimerStore) RangeGetTimers(ctx context.Context, shardId int, r
 		dbShardId                  int
 		dbRowType                  int16
 		dbTimerExecuteAt           time.Time
-		dbTimerUuidHigh            int64
-		dbTimerUuidLow             int64
+		dbTimerUuid                gocql.UUID
 		dbTimerId                  string
 		dbTimerNamespace           string
 		dbTimerCallbackUrl         string
@@ -357,12 +355,12 @@ func (c *CassandraTimerStore) RangeGetTimers(ctx context.Context, shardId int, r
 		dbTimerAttempts            int32
 	)
 
-	for iter.Scan(&dbShardId, &dbRowType, &dbTimerExecuteAt, &dbTimerUuidHigh, &dbTimerUuidLow,
+	for iter.Scan(&dbShardId, &dbRowType, &dbTimerExecuteAt, &dbTimerUuid,
 		&dbTimerId, &dbTimerNamespace, &dbTimerCallbackUrl, &dbTimerPayload,
 		&dbTimerRetryPolicy, &dbTimerCallbackTimeoutSecs, &dbTimerCreatedAt, &dbTimerAttempts) {
 
-		// Convert UUID high/low back to UUID
-		timerUuid := databases.HighLowToUuid(dbTimerUuidHigh, dbTimerUuidLow)
+		// Convert gocql.UUID to uuid.UUID for consistency
+		timerUuid, _ := uuid.FromBytes(dbTimerUuid.Bytes())
 
 		// Parse JSON payload and retry policy
 		var payload interface{}
@@ -406,34 +404,34 @@ func (c *CassandraTimerStore) RangeGetTimers(ctx context.Context, shardId int, r
 }
 
 func (c *CassandraTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
-	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for shard records - convert to gocql.UUID for Cassandra
+	zeroUuid, _ := gocql.UUIDFromBytes(databases.ZeroUUID[:])
 
-	// Convert start and end UUIDs to high/low format for precise range selection
-	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
-	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+	// Use start and end UUIDs - convert to gocql.UUID for Cassandra
+	startUuid, _ := gocql.UUIDFromBytes(request.StartTimeUuid[:])
+	endUuid, _ := gocql.UUIDFromBytes(request.EndTimeUuid[:])
 
 	// Create a batch with LWT for atomic operation
 	batch := c.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
 
 	// Add shard version check to batch - update shard version to same value to verify it matches
-	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
-	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
+	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF shard_version = ?`
+	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid, shardVersion)
 
 	// Add range DELETE statement for timers in the specified range
 	deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? 
-	                AND (timer_execute_at, timer_uuid_high, timer_uuid_low) >= (?, ?, ?)
-	                AND (timer_execute_at, timer_uuid_high, timer_uuid_low) <= (?, ?, ?)`
+	                AND (timer_execute_at, timer_uuid) >= (?, ?)
+	                AND (timer_execute_at, timer_uuid) <= (?, ?)`
 	batch.Query(deleteQuery, shardId, databases.RowTypeTimer,
-		request.StartTimestamp, startUuidHigh, startUuidLow,
-		request.EndTimestamp, endUuidHigh, endUuidLow)
+		request.StartTimestamp, startUuid,
+		request.EndTimestamp, endUuid)
 
 	// Add INSERT statements for new timers
-	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	for _, timer := range TimersToInsert {
-		// Convert the timer UUID to high/low format
-		timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timer.TimerUuid)
+		// Use the timer UUID - convert to gocql.UUID for Cassandra
+		timerUuid, _ := gocql.UUIDFromBytes(timer.TimerUuid[:])
 
 		// Serialize payload and retry policy to JSON
 		var payloadJSON, retryPolicyJSON string
@@ -458,8 +456,7 @@ func (c *CassandraTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context,
 			shardId,
 			databases.RowTypeTimer,
 			timer.ExecuteAt,
-			timerUuidHigh,
-			timerUuidLow,
+			timerUuid,
 			timer.Id,
 			timer.Namespace,
 			timer.CallbackUrl,
@@ -499,17 +496,17 @@ func (c *CassandraTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context,
 
 func (c *CassandraTimerStore) RangeDeleteWithLimit(ctx context.Context, shardId int, request *databases.RangeDeleteTimersRequest, limit int) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
 	// Note: Cassandra doesn't support LIMIT in DELETE statements, so limit parameter is ignored
-	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
-	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+	startUuid, _ := gocql.UUIDFromBytes(request.StartTimeUuid[:])
+	endUuid, _ := gocql.UUIDFromBytes(request.EndTimeUuid[:])
 
 	deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? 
-	                AND (timer_execute_at, timer_uuid_high, timer_uuid_low) >= (?, ?, ?)
-	                AND (timer_execute_at, timer_uuid_high, timer_uuid_low) <= (?, ?, ?)`
+	                AND (timer_execute_at, timer_uuid) >= (?, ?)
+	                AND (timer_execute_at, timer_uuid) <= (?, ?)`
 
 	err := c.session.Query(deleteQuery,
 		shardId, databases.RowTypeTimer,
-		request.StartTimestamp, startUuidHigh, startUuidLow,
-		request.EndTimestamp, endUuidHigh, endUuidLow,
+		request.StartTimestamp, startUuid,
+		request.EndTimestamp, endUuid,
 	).WithContext(ctx).Exec()
 
 	if err != nil {
@@ -520,8 +517,8 @@ func (c *CassandraTimerStore) RangeDeleteWithLimit(ctx context.Context, shardId 
 }
 
 func (c *CassandraTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
-	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for shard records - convert to gocql.UUID for Cassandra
+	zeroUuid, _ := gocql.UUIDFromBytes(databases.ZeroUUID[:])
 
 	// Serialize new payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON string
@@ -546,7 +543,7 @@ func (c *CassandraTimerStore) UpdateTimer(ctx context.Context, shardId int, shar
 	// Use the secondary index on timer_id and filter results in application code
 	// This lookup combines partition key (shard_id) with secondary index (timer_id)
 	// Most efficient query pattern - partition key + secondary index
-	lookupQuery := `SELECT shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, timer_created_at, timer_namespace FROM timers 
+	lookupQuery := `SELECT shard_id, row_type, timer_execute_at, timer_uuid, timer_created_at, timer_namespace FROM timers 
 	                WHERE shard_id = ? AND timer_id = ?`
 
 	// Perform lookup outside the LWT batch due to Cassandra limitations with secondary indexes in LWT
@@ -560,10 +557,10 @@ func (c *CassandraTimerStore) UpdateTimer(ctx context.Context, shardId int, shar
 	var resultShardId int
 	var resultRowType int16
 	var resultExecuteAt, resultCreatedAt time.Time
-	var resultUuidHigh, resultUuidLow int64
+	var resultUuid gocql.UUID
 	var resultNamespace string
 
-	for iter.Scan(&resultShardId, &resultRowType, &resultExecuteAt, &resultUuidHigh, &resultUuidLow, &resultCreatedAt, &resultNamespace) {
+	for iter.Scan(&resultShardId, &resultRowType, &resultExecuteAt, &resultUuid, &resultCreatedAt, &resultNamespace) {
 		if resultShardId == shardId && resultRowType == databases.RowTypeTimer && resultNamespace == namespace {
 			found = true
 			break
@@ -582,14 +579,14 @@ func (c *CassandraTimerStore) UpdateTimer(ctx context.Context, shardId int, shar
 	batch := c.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
 
 	// Add shard version check to batch - update shard version to same value to verify it matches
-	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
-	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
+	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF shard_version = ?`
+	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid, shardVersion)
 
 	if request.ExecuteAt.Equal(resultExecuteAt) {
 		// Same execution time - can do direct UPDATE using existing primary key
 		// Add IF EXISTS to detect if timer was deleted between lookup and LWT
 		updateQuery := `UPDATE timers SET timer_callback_url = ?, timer_payload = ?, timer_retry_policy = ?, timer_callback_timeout_seconds = ?, timer_attempts = ? 
-		                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF EXISTS`
+		                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF EXISTS`
 		batch.Query(updateQuery,
 			request.CallbackUrl,
 			payloadJSON,
@@ -599,24 +596,22 @@ func (c *CassandraTimerStore) UpdateTimer(ctx context.Context, shardId int, shar
 			shardId,
 			databases.RowTypeTimer,
 			resultExecuteAt,
-			resultUuidHigh,
-			resultUuidLow,
+			resultUuid,
 		)
 	} else {
 		// Different execution time - need delete+insert because timer_execute_at is part of primary key
 		// Add IF EXISTS to detect if timer was deleted between lookup and LWT
-		deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF EXISTS`
-		batch.Query(deleteQuery, shardId, databases.RowTypeTimer, resultExecuteAt, resultUuidHigh, resultUuidLow)
+		deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF EXISTS`
+		batch.Query(deleteQuery, shardId, databases.RowTypeTimer, resultExecuteAt, resultUuid)
 
 		// timerUUID is the same as the current timerUUID because the timerID is the same
 
-		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		batch.Query(insertQuery,
 			shardId,
 			databases.RowTypeTimer,
 			request.ExecuteAt,
-			resultUuidHigh,
-			resultUuidLow,
+			resultUuid,
 			request.TimerId,
 			namespace,
 			request.CallbackUrl,
@@ -670,7 +665,7 @@ func (c *CassandraTimerStore) UpdateTimer(ctx context.Context, shardId int, shar
 
 func (c *CassandraTimerStore) GetTimer(ctx context.Context, shardId int, namespace string, timerId string) (timer *databases.DbTimer, err *databases.DbError) {
 	// Query to get the timer by namespace and timer ID
-	query := `SELECT shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low,
+	query := `SELECT shard_id, row_type, timer_execute_at, timer_uuid,
 	                 timer_id, timer_namespace, timer_callback_url, timer_payload, 
 	                 timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts
 	          FROM timers 
@@ -681,8 +676,7 @@ func (c *CassandraTimerStore) GetTimer(ctx context.Context, shardId int, namespa
 		dbShardId                  int
 		dbRowType                  int16
 		dbTimerExecuteAt           time.Time
-		dbTimerUuidHigh            int64
-		dbTimerUuidLow             int64
+		dbTimerUuid                gocql.UUID
 		dbTimerId                  string
 		dbTimerNamespace           string
 		dbTimerCallbackUrl         string
@@ -695,7 +689,7 @@ func (c *CassandraTimerStore) GetTimer(ctx context.Context, shardId int, namespa
 
 	err2 := c.session.Query(query, shardId, databases.RowTypeTimer, namespace, timerId).
 		WithContext(ctx).
-		Scan(&dbShardId, &dbRowType, &dbTimerExecuteAt, &dbTimerUuidHigh, &dbTimerUuidLow,
+		Scan(&dbShardId, &dbRowType, &dbTimerExecuteAt, &dbTimerUuid,
 			&dbTimerId, &dbTimerNamespace, &dbTimerCallbackUrl, &dbTimerPayload,
 			&dbTimerRetryPolicy, &dbTimerCallbackTimeoutSecs, &dbTimerCreatedAt, &dbTimerAttempts)
 
@@ -706,8 +700,8 @@ func (c *CassandraTimerStore) GetTimer(ctx context.Context, shardId int, namespa
 		return nil, databases.NewGenericDbError("failed to query timer", err2)
 	}
 
-	// Convert UUID high/low back to UUID
-	timerUuid := databases.HighLowToUuid(dbTimerUuidHigh, dbTimerUuidLow)
+	// Convert gocql.UUID to uuid.UUID for consistency
+	timerUuid, _ := uuid.FromBytes(dbTimerUuid.Bytes())
 
 	// Parse JSON payload and retry policy
 	var payload interface{}
@@ -742,12 +736,12 @@ func (c *CassandraTimerStore) GetTimer(ctx context.Context, shardId int, namespa
 }
 
 func (c *CassandraTimerStore) DeleteTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timerId string) *databases.DbError {
-	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for shard records - convert to gocql.UUID for Cassandra
+	zeroUuid, _ := gocql.UUIDFromBytes(databases.ZeroUUID[:])
 
-	// First, find the timer's primary key components (execute_at, uuid_high, uuid_low)
+	// First, find the timer's primary key components (execute_at, uuid)
 	// This lookup is done outside the LWT batch due to Cassandra limitations with secondary indexes in LWT
-	lookupQuery := `SELECT shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low, timer_namespace FROM timers 
+	lookupQuery := `SELECT shard_id, row_type, timer_execute_at, timer_uuid, timer_namespace FROM timers 
 	                WHERE shard_id = ? AND timer_id = ?`
 
 	iter := c.session.Query(lookupQuery, shardId, timerId).
@@ -758,11 +752,11 @@ func (c *CassandraTimerStore) DeleteTimer(ctx context.Context, shardId int, shar
 	var resultShardId int
 	var resultRowType int16
 	var resultExecuteAt time.Time
-	var resultUuidHigh, resultUuidLow int64
+	var resultUuid gocql.UUID
 	var resultNamespace string
 	var found bool
 
-	for iter.Scan(&resultShardId, &resultRowType, &resultExecuteAt, &resultUuidHigh, &resultUuidLow, &resultNamespace) {
+	for iter.Scan(&resultShardId, &resultRowType, &resultExecuteAt, &resultUuid, &resultNamespace) {
 		if resultShardId == shardId && resultRowType == databases.RowTypeTimer && resultNamespace == namespace {
 			found = true
 			break
@@ -782,12 +776,12 @@ func (c *CassandraTimerStore) DeleteTimer(ctx context.Context, shardId int, shar
 	batch := c.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
 
 	// Add shard version check to batch - update shard version to same value to verify it matches
-	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
-	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
+	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF shard_version = ?`
+	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid, shardVersion)
 
 	// Add DELETE statement for the specific timer using primary key with IF EXISTS to detect race conditions
-	deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF EXISTS`
-	batch.Query(deleteQuery, shardId, databases.RowTypeTimer, resultExecuteAt, resultUuidHigh, resultUuidLow)
+	deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF EXISTS`
+	batch.Query(deleteQuery, shardId, databases.RowTypeTimer, resultExecuteAt, resultUuid)
 
 	// Execute the batch atomically
 	previous := make(map[string]interface{})

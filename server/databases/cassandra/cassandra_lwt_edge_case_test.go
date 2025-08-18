@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gocql/gocql"
+	"github.com/google/uuid"
 	"github.com/iworkflowio/durable-timer/databases"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,23 +32,25 @@ func TestCassandraLWTBatchEdgeCase(t *testing.T) {
 	require.Equal(t, int64(1), shardVersion)
 
 	// Step 2: Set up the exact same batch pattern as DeleteTimer uses
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Convert ZeroUUID to gocql.UUID for use in Cassandra queries
+	zeroUuid, _ := gocql.UUIDFromBytes(databases.ZeroUUID[:])
 
 	// Create fake timer coordinates for a non-existing timer
 	fakeExecuteAt := time.Now().UTC().Add(5 * time.Minute)
-	fakeUuidHigh := int64(12345)
-	fakeUuidLow := int64(67890)
+	fakeUuidGo, _ := uuid.NewRandom() // Generate a random UUID for the fake timer
+	// Convert to gocql.UUID for use in Cassandra queries
+	fakeUuid, _ := gocql.UUIDFromBytes(fakeUuidGo[:])
 
 	// Create the same batch pattern as DeleteTimer method
 	batch := store.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
 
 	// Add shard version check (this should succeed since shard exists with correct version)
-	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF shard_version = ?`
-	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow, shardVersion)
+	checkVersionQuery := `UPDATE timers SET shard_version = ? WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF shard_version = ?`
+	batch.Query(checkVersionQuery, shardVersion, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid, shardVersion)
 
 	// Add DELETE statement for a non-existing timer with IF EXISTS (this should fail)
-	deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid_high = ? AND timer_uuid_low = ? IF EXISTS`
-	batch.Query(deleteQuery, shardId, databases.RowTypeTimer, fakeExecuteAt, fakeUuidHigh, fakeUuidLow)
+	deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF EXISTS`
+	batch.Query(deleteQuery, shardId, databases.RowTypeTimer, fakeExecuteAt, fakeUuid)
 
 	// Execute the batch and capture results
 	previous := make(map[string]interface{})
