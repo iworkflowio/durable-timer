@@ -10,6 +10,7 @@ import (
 )
 
 type TimerEngine interface {
+	Start() error
 	Close() error
 	AddShard(shardId int) error
 	RemoveShard(shardId int) error
@@ -28,6 +29,7 @@ func NewTimerEngine(config *config.Config, store databases.TimerStore) (TimerEng
 // 5. Listen from a channel from CallbackProcessor to know when a timer is completed. When a timer is completed, remove it from the list. 
 //   5.1 If the timer is the first timer in the list, send notification signals to TimerBatchDeleter 
 type TimerQueue interface {
+	Start() error
 	// Close the timer queue
 	Close() error
 }
@@ -59,6 +61,7 @@ type OffsetChannelPerShard struct {
 // 3. Concurrently process timers using a thread pool
 // 4. Send the completed timer to the processingCompletedChannel
 type CallbackProcessor interface {
+	Start() error
 	Close() error
 }
 
@@ -75,7 +78,7 @@ func NewCallbackProcessor(
 // 1. Responsible for reading timers from database
 // 2. Pass the timers into TimerQueue for processing
 type TimerBatchReader interface {
-
+	Start() error
 	Close() error
 }
 
@@ -83,6 +86,7 @@ func NewTimerBatchReader(
 	config *config.Config,
 	shardId int,
 	loadingBufferChannel chan<- *databases.DbTimer, // send-only channel to pass the timers to the timer queue
+	store databases.TimerStore, 
 ) (TimerBatchReader, error) {
 	// TODO: implement
 	return nil, nil
@@ -92,15 +96,21 @@ func NewTimerBatchReader(
 // 1. Responsible for deleting timers from database, and updating the delete offset timestamp and uuid
 // 2. Listen to a offset channel to know when to delete timers from database (with some delay to control the rate of deleting)
 type TimerBatchDeleter interface {
-
+	Start() error
 	Close() error
 }
 
 func NewTimerBatchDeleter(
 	config *config.Config,
 	shardId int,
-	offsetChannel <-chan *TimerOffset, // the receive-only channel to receive the committed offset from the timer queue
+	offsetNotificationChannel <-chan *TimerOffset, // the receive-only channel to receive the committed offset from the timer queue
+	store databases.TimerStore, 
 ) (TimerBatchDeleter, error) {
-	// TODO: implement
-	return nil, nil
+	return &batchDeleterImpl{
+		config: config,
+		shardId: shardId,
+		offsetNotificationChannel: offsetNotificationChannel,
+		store: store,
+		closeChan: make(chan struct{}),
+	}, nil
 }
