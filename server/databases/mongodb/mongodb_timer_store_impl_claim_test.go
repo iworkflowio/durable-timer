@@ -26,8 +26,8 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 	shardId := 1
 	ownerAddr := "test-owner-123"
 
-	// Convert ZeroUUID to high/low format for test queries
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for test queries
+	zeroUuid := databases.ZeroUUID
 
 	// Claim ownership of a new shard
 	prevShardInfo, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
@@ -44,8 +44,7 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid_high":  zeroUuidHigh,
-		"timer_uuid_low":   zeroUuidLow,
+		"timer_uuid":       zeroUuid,
 	}
 
 	var result bson.M
@@ -100,16 +99,15 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 	assert.Equal(t, int64(3), current3.ShardVersion)
 	assert.Equal(t, "owner-1", current3.OwnerAddr)
 
-	// Convert ZeroUUID to high/low format for test queries
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for test queries
+	zeroUuid := databases.ZeroUUID
 
 	// Verify final state
 	filter := bson.M{
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid_high":  zeroUuidHigh,
-		"timer_uuid_low":   zeroUuidLow,
+		"timer_uuid":       zeroUuid,
 	}
 
 	var result bson.M
@@ -184,16 +182,15 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 	assert.Greater(t, failureCount, 1, "Should have some failures due to concurrency")
 	assert.Greater(t, maxVersion, int64(0), "Maximum version should be positive")
 
-	// Convert ZeroUUID to high/low format for test queries
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for test queries
+	zeroUuid := databases.ZeroUUID
 
 	// Verify final database state
 	filter := bson.M{
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid_high":  zeroUuidHigh,
-		"timer_uuid_low":   zeroUuidLow,
+		"timer_uuid":       zeroUuid,
 	}
 
 	var result bson.M
@@ -220,16 +217,15 @@ func TestClaimShardOwnership_DefaultMetadata(t *testing.T) {
 	assert.NotNil(t, currentShardInfo)
 	assert.Equal(t, int64(1), currentShardInfo.ShardVersion)
 
-	// Convert ZeroUUID to high/low format for test queries
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for test queries
+	zeroUuid := databases.ZeroUUID
 
 	// Verify metadata is empty/null in database
 	filter := bson.M{
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid_high":  zeroUuidHigh,
-		"timer_uuid_low":   zeroUuidLow,
+		"timer_uuid":       zeroUuid,
 	}
 
 	var result bson.M

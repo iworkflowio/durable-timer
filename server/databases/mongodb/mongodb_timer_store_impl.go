@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/iworkflowio/durable-timer/config"
 	"github.com/iworkflowio/durable-timer/databases"
 	"go.mongodb.org/mongo-driver/bson"
@@ -98,8 +99,8 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 	shardId int,
 	ownerAddr string,
 ) (prevShardInfo, currentShardInfo *databases.ShardInfo, err *databases.DbError) {
-	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for shard records
+	zeroUuid := databases.ZeroUUID
 
 	now := time.Now().UTC()
 
@@ -108,8 +109,7 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid_high":  zeroUuidHigh,
-		"timer_uuid_low":   zeroUuidLow,
+		"timer_uuid":       zeroUuid,
 	}
 
 	// First, try to read the current shard record
@@ -135,8 +135,7 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 			"shard_id":         shardId,
 			"row_type":         databases.RowTypeShard,
 			"timer_execute_at": databases.ZeroTimestamp,
-			"timer_uuid_high":  zeroUuidHigh,
-			"timer_uuid_low":   zeroUuidLow,
+			"timer_uuid":       zeroUuid,
 			"shard_version":    newVersion,
 			"shard_owner_addr": ownerAddr,
 			"shard_claimed_at": now,
@@ -175,8 +174,7 @@ func (m *MongoDBTimerStore) ClaimShardOwnership(
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid_high":  zeroUuidHigh,
-		"timer_uuid_low":   zeroUuidLow,
+		"timer_uuid":       zeroUuid,
 		"shard_version":    currentVersion, // Only update if version matches
 	}
 
@@ -217,8 +215,8 @@ func (m *MongoDBTimerStore) UpdateShardMetadata(
 	shardVersion int64,
 	metadata databases.ShardMetadata,
 ) (err *databases.DbError) {
-	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for shard records
+	zeroUuid := databases.ZeroUUID
 
 	// Marshal metadata to JSON
 	metadataJSON, marshalErr := json.Marshal(metadata)
@@ -231,8 +229,7 @@ func (m *MongoDBTimerStore) UpdateShardMetadata(
 		"shard_id":         shardId,
 		"row_type":         databases.RowTypeShard,
 		"timer_execute_at": databases.ZeroTimestamp,
-		"timer_uuid_high":  zeroUuidHigh,
-		"timer_uuid_low":   zeroUuidLow,
+		"timer_uuid":       zeroUuid,
 		"shard_version":    shardVersion, // Only update if version matches
 	}
 
@@ -326,11 +323,11 @@ func extractShardInfoFromMongoDoc(doc bson.M, shardId int64) *databases.ShardInf
 }
 
 func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	// Convert the provided timer UUID to high/low format for predictable pagination
-	timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timer.TimerUuid)
+	// Use the provided timer UUID
+	timerUuid := timer.TimerUuid
 
-	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for shard records
+	zeroUuid := databases.ZeroUUID
 
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON interface{}
@@ -370,8 +367,7 @@ func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardV
 			"shard_id":         shardId,
 			"row_type":         databases.RowTypeShard,
 			"timer_execute_at": databases.ZeroTimestamp,
-			"timer_uuid_high":  zeroUuidHigh,
-			"timer_uuid_low":   zeroUuidLow,
+			"timer_uuid":       zeroUuid,
 		}
 
 		var shardDoc bson.M
@@ -395,7 +391,7 @@ func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardV
 		}
 
 		// Shard version matches, proceed to upsert timer
-		timerDoc := m.buildTimerDocumentForUpsert(shardId, timer, timerUuidHigh, timerUuidLow, payloadJSON, retryPolicyJSON)
+		timerDoc := m.buildTimerDocumentForUpsert(shardId, timer, timerUuid, payloadJSON, retryPolicyJSON)
 
 		// Use UpdateOne with upsert to overwrite existing timer if it exists
 		timerFilter := bson.M{
@@ -431,13 +427,12 @@ func (m *MongoDBTimerStore) CreateTimer(ctx context.Context, shardId int, shardV
 }
 
 // buildTimerDocumentForUpsert creates a timer document for upsert operations (without _id field)
-func (m *MongoDBTimerStore) buildTimerDocumentForUpsert(shardId int, timer *databases.DbTimer, timerUuidHigh, timerUuidLow int64, payloadJSON, retryPolicyJSON interface{}) bson.M {
+func (m *MongoDBTimerStore) buildTimerDocumentForUpsert(shardId int, timer *databases.DbTimer, timerUuid uuid.UUID, payloadJSON, retryPolicyJSON interface{}) bson.M {
 	timerDoc := bson.M{
 		"shard_id":                       shardId,
 		"row_type":                       databases.RowTypeTimer,
 		"timer_execute_at":               timer.ExecuteAt,
-		"timer_uuid_high":                timerUuidHigh,
-		"timer_uuid_low":                 timerUuidLow,
+		"timer_uuid":                     timerUuid,
 		"timer_id":                       timer.Id,
 		"timer_namespace":                timer.Namespace,
 		"timer_callback_url":             timer.CallbackUrl,
@@ -458,8 +453,8 @@ func (m *MongoDBTimerStore) buildTimerDocumentForUpsert(shardId int, timer *data
 }
 
 func (m *MongoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, namespace string, timer *databases.DbTimer) (err *databases.DbError) {
-	// Convert the provided timer UUID to high/low format for predictable pagination
-	timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timer.TimerUuid)
+	// Use the provided timer UUID
+	timerUuid := timer.TimerUuid
 
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON interface{}
@@ -481,7 +476,7 @@ func (m *MongoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, 
 	}
 
 	// Create timer document without _id for upsert
-	timerDoc := m.buildTimerDocumentForUpsert(shardId, timer, timerUuidHigh, timerUuidLow, payloadJSON, retryPolicyJSON)
+	timerDoc := m.buildTimerDocumentForUpsert(shardId, timer, timerUuid, payloadJSON, retryPolicyJSON)
 
 	// Use UpdateOne with upsert to overwrite existing timer if it exists (no locking or version checking)
 	timerFilter := bson.M{
@@ -501,60 +496,36 @@ func (m *MongoDBTimerStore) CreateTimerNoLock(ctx context.Context, shardId int, 
 	return nil
 }
 
-// buildRangeCondition creates a MongoDB condition for tuple comparison (timestamp, uuid_high, uuid_low)
+// buildRangeCondition creates a MongoDB condition for tuple comparison (timestamp, uuid)
 // operator should be "$gte" for start boundary or "$lte" for end boundary
-func buildRangeCondition(operator string, timestamp time.Time, uuidHigh, uuidLow int64) bson.M {
+func buildRangeCondition(operator string, timestamp time.Time, uuid uuid.UUID) bson.M {
 	switch operator {
 	case "$gte":
-		// For >= comparison: (timestamp, uuid_high, uuid_low) >= (target_timestamp, target_uuid_high, target_uuid_low)
+		// For >= comparison: (timestamp, uuid) >= (target_timestamp, target_uuid)
 		return bson.M{
 			"$or": []bson.M{
 				// Case 1: timestamp > target_timestamp (clearly after)
 				{"timer_execute_at": bson.M{"$gt": timestamp}},
-				// Case 2: timestamp == target_timestamp, check UUID
+				// Case 2: timestamp == target_timestamp, check UUID using binary comparison
 				{
 					"$and": []bson.M{
 						{"timer_execute_at": timestamp},
-						{
-							"$or": []bson.M{
-								// Case 2a: same timestamp, uuid_high > target_uuid_high
-								{"timer_uuid_high": bson.M{"$gt": uuidHigh}},
-								// Case 2b: same timestamp, same uuid_high, uuid_low >= target_uuid_low
-								{
-									"$and": []bson.M{
-										{"timer_uuid_high": uuidHigh},
-										{"timer_uuid_low": bson.M{"$gte": uuidLow}},
-									},
-								},
-							},
-						},
+						{"timer_uuid": bson.M{operator: uuid}},
 					},
 				},
 			},
 		}
 	case "$lte":
-		// For <= comparison: (timestamp, uuid_high, uuid_low) <= (target_timestamp, target_uuid_high, target_uuid_low)
+		// For <= comparison: (timestamp, uuid) <= (target_timestamp, target_uuid)
 		return bson.M{
 			"$or": []bson.M{
 				// Case 1: timestamp < target_timestamp (clearly before)
 				{"timer_execute_at": bson.M{"$lt": timestamp}},
-				// Case 2: timestamp == target_timestamp, check UUID
+				// Case 2: timestamp == target_timestamp, check UUID using binary comparison
 				{
 					"$and": []bson.M{
 						{"timer_execute_at": timestamp},
-						{
-							"$or": []bson.M{
-								// Case 2a: same timestamp, uuid_high < target_uuid_high
-								{"timer_uuid_high": bson.M{"$lt": uuidHigh}},
-								// Case 2b: same timestamp, same uuid_high, uuid_low <= target_uuid_low
-								{
-									"$and": []bson.M{
-										{"timer_uuid_high": uuidHigh},
-										{"timer_uuid_low": bson.M{"$lte": uuidLow}},
-									},
-								},
-							},
-						},
+						{"timer_uuid": bson.M{operator: uuid}},
 					},
 				},
 			},
@@ -566,16 +537,16 @@ func buildRangeCondition(operator string, timestamp time.Time, uuidHigh, uuidLow
 }
 
 func (c *MongoDBTimerStore) RangeGetTimers(ctx context.Context, shardId int, request *databases.RangeGetTimersRequest) (*databases.RangeGetTimersResponse, *databases.DbError) {
-	// Convert start and end UUIDs to high/low format for precise range selection
-	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
-	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+	// Use start and end UUIDs for precise range selection
+	startUuid := request.StartTimeUuid
+	endUuid := request.EndTimeUuid
 
 	// Query timers in the specified range with precise UUID boundaries
 	// Using a cleaner approach than the original complex nested query
 
 	// Build the range filter step by step for clarity
-	startCondition := buildRangeCondition("$gte", request.StartTimestamp, startUuidHigh, startUuidLow)
-	endCondition := buildRangeCondition("$lte", request.EndTimestamp, endUuidHigh, endUuidLow)
+	startCondition := buildRangeCondition("$gte", request.StartTimestamp, startUuid)
+	endCondition := buildRangeCondition("$lte", request.EndTimestamp, endUuid)
 
 	filter := bson.M{
 		"shard_id": shardId,
@@ -587,8 +558,7 @@ func (c *MongoDBTimerStore) RangeGetTimers(ctx context.Context, shardId int, req
 	findOptions := options.Find().
 		SetSort(bson.D{
 			{Key: "timer_execute_at", Value: 1},
-			{Key: "timer_uuid_high", Value: 1},
-			{Key: "timer_uuid_low", Value: 1},
+			{Key: "timer_uuid", Value: 1},
 		}).
 		SetLimit(int64(request.Limit))
 
@@ -606,10 +576,9 @@ func (c *MongoDBTimerStore) RangeGetTimers(ctx context.Context, shardId int, req
 			return nil, databases.NewGenericDbError("failed to decode timer document", err)
 		}
 
-		// Convert UUID high/low back to UUID
-		timerUuidHigh := doc["timer_uuid_high"].(int64)
-		timerUuidLow := doc["timer_uuid_low"].(int64)
-		timerUuid := databases.HighLowToUuid(timerUuidHigh, timerUuidLow)
+		// Get UUID from document
+		timerUuid := doc["timer_uuid"].(primitive.Binary).Data
+		timerUuidGo, _ := uuid.FromBytes(timerUuid)
 
 		// Parse JSON payload and retry policy
 		var payload interface{}
@@ -629,7 +598,7 @@ func (c *MongoDBTimerStore) RangeGetTimers(ctx context.Context, shardId int, req
 
 		timer := &databases.DbTimer{
 			Id:                     doc["timer_id"].(string),
-			TimerUuid:              timerUuid,
+			TimerUuid:              timerUuidGo,
 			Namespace:              doc["timer_namespace"].(string),
 			ExecuteAt:              doc["timer_execute_at"].(primitive.DateTime).Time(),
 			CallbackUrl:            doc["timer_callback_url"].(string),
@@ -653,12 +622,12 @@ func (c *MongoDBTimerStore) RangeGetTimers(ctx context.Context, shardId int, req
 }
 
 func (c *MongoDBTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, shardId int, shardVersion int64, request *databases.RangeDeleteTimersRequest, TimersToInsert []*databases.DbTimer) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
-	// Convert start and end UUIDs to high/low format for precise range selection
-	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
-	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+	// Use start and end UUIDs for precise range selection
+	startUuid := request.StartTimeUuid
+	endUuid := request.EndTimeUuid
 
-	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for shard records
+	zeroUuid := databases.ZeroUUID
 
 	// Use MongoDB transaction to atomically check shard version, delete timers, and insert new ones
 	session, sessionErr := c.client.StartSession()
@@ -681,8 +650,7 @@ func (c *MongoDBTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, s
 			"shard_id":         shardId,
 			"row_type":         databases.RowTypeShard,
 			"timer_execute_at": databases.ZeroTimestamp,
-			"timer_uuid_high":  zeroUuidHigh,
-			"timer_uuid_low":   zeroUuidLow,
+			"timer_uuid":       zeroUuid,
 		}
 
 		var shardDoc bson.M
@@ -705,44 +673,15 @@ func (c *MongoDBTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, s
 			return nil
 		}
 
+		// Use the same range condition logic as in RangeGetTimers
+		startCondition := buildRangeCondition("$gte", request.StartTimestamp, startUuid)
+		endCondition := buildRangeCondition("$lte", request.EndTimestamp, endUuid)
+
 		// Count timers to be deleted
 		deleteFilter := bson.M{
 			"shard_id": shardId,
 			"row_type": databases.RowTypeTimer,
-			"$or": []bson.M{
-				{
-					"timer_execute_at": bson.M{"$gt": request.StartTimestamp},
-				},
-				{
-					"timer_execute_at": request.StartTimestamp,
-					"timer_uuid_high":  bson.M{"$gt": startUuidHigh},
-				},
-				{
-					"timer_execute_at": request.StartTimestamp,
-					"timer_uuid_high":  startUuidHigh,
-					"timer_uuid_low":   bson.M{"$gte": startUuidLow},
-				},
-			},
-		}
-
-		// Add upper bound constraint
-		deleteFilter["$and"] = []bson.M{
-			{
-				"$or": []bson.M{
-					{
-						"timer_execute_at": bson.M{"$lt": request.EndTimestamp},
-					},
-					{
-						"timer_execute_at": request.EndTimestamp,
-						"timer_uuid_high":  bson.M{"$lt": endUuidHigh},
-					},
-					{
-						"timer_execute_at": request.EndTimestamp,
-						"timer_uuid_high":  endUuidHigh,
-						"timer_uuid_low":   bson.M{"$lte": endUuidLow},
-					},
-				},
-			},
+			"$and":     []bson.M{startCondition, endCondition},
 		}
 
 		deleteResult, deleteErr := c.collection.DeleteMany(sc, deleteFilter)
@@ -753,7 +692,7 @@ func (c *MongoDBTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, s
 
 		// Insert new timers
 		for _, timer := range TimersToInsert {
-			timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timer.TimerUuid)
+			timerUuid := timer.TimerUuid
 
 			// Serialize payload and retry policy to JSON
 			var payloadJSON, retryPolicyJSON interface{}
@@ -776,7 +715,7 @@ func (c *MongoDBTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, s
 				retryPolicyJSON = string(retryPolicyBytes)
 			}
 
-			timerDoc := c.buildTimerDocumentForUpsert(shardId, timer, timerUuidHigh, timerUuidLow, payloadJSON, retryPolicyJSON)
+			timerDoc := c.buildTimerDocumentForUpsert(shardId, timer, timerUuid, payloadJSON, retryPolicyJSON)
 
 			_, insertErr := c.collection.InsertOne(sc, timerDoc)
 			if insertErr != nil {
@@ -812,48 +751,19 @@ func (c *MongoDBTimerStore) RangeDeleteWithBatchInsertTxn(ctx context.Context, s
 
 func (c *MongoDBTimerStore) RangeDeleteWithLimit(ctx context.Context, shardId int, request *databases.RangeDeleteTimersRequest, limit int) (*databases.RangeDeleteTimersResponse, *databases.DbError) {
 	// Note: MongoDB limit parameter is ignored for simplicity, similar to Cassandra
-	// Convert start and end UUIDs to high/low format for precise range selection
-	startUuidHigh, startUuidLow := databases.UuidToHighLow(request.StartTimeUuid)
-	endUuidHigh, endUuidLow := databases.UuidToHighLow(request.EndTimeUuid)
+	// Use start and end UUIDs for precise range selection
+	startUuid := request.StartTimeUuid
+	endUuid := request.EndTimeUuid
+
+	// Use the same range condition logic as in RangeGetTimers
+	startCondition := buildRangeCondition("$gte", request.StartTimestamp, startUuid)
+	endCondition := buildRangeCondition("$lte", request.EndTimestamp, endUuid)
 
 	// Build delete filter for range selection
 	deleteFilter := bson.M{
 		"shard_id": shardId,
 		"row_type": databases.RowTypeTimer,
-		"$or": []bson.M{
-			{
-				"timer_execute_at": bson.M{"$gt": request.StartTimestamp},
-			},
-			{
-				"timer_execute_at": request.StartTimestamp,
-				"timer_uuid_high":  bson.M{"$gt": startUuidHigh},
-			},
-			{
-				"timer_execute_at": request.StartTimestamp,
-				"timer_uuid_high":  startUuidHigh,
-				"timer_uuid_low":   bson.M{"$gte": startUuidLow},
-			},
-		},
-	}
-
-	// Add upper bound constraint
-	deleteFilter["$and"] = []bson.M{
-		{
-			"$or": []bson.M{
-				{
-					"timer_execute_at": bson.M{"$lt": request.EndTimestamp},
-				},
-				{
-					"timer_execute_at": request.EndTimestamp,
-					"timer_uuid_high":  bson.M{"$lt": endUuidHigh},
-				},
-				{
-					"timer_execute_at": request.EndTimestamp,
-					"timer_uuid_high":  endUuidHigh,
-					"timer_uuid_low":   bson.M{"$lte": endUuidLow},
-				},
-			},
-		},
+		"$and":     []bson.M{startCondition, endCondition},
 	}
 
 	// Delete all matching documents (limit ignored)
@@ -868,8 +778,8 @@ func (c *MongoDBTimerStore) RangeDeleteWithLimit(ctx context.Context, shardId in
 }
 
 func (c *MongoDBTimerStore) UpdateTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
-	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for shard records
+	zeroUuid := databases.ZeroUUID
 
 	// Serialize payload and retry policy to JSON
 	var payloadJSON, retryPolicyJSON interface{}
@@ -909,8 +819,7 @@ func (c *MongoDBTimerStore) UpdateTimer(ctx context.Context, shardId int, shardV
 			"shard_id":         shardId,
 			"row_type":         databases.RowTypeShard,
 			"timer_execute_at": databases.ZeroTimestamp,
-			"timer_uuid_high":  zeroUuidHigh,
-			"timer_uuid_low":   zeroUuidLow,
+			"timer_uuid":       zeroUuid,
 		}
 
 		var shardDoc bson.M
@@ -948,9 +857,7 @@ func (c *MongoDBTimerStore) UpdateTimer(ctx context.Context, shardId int, shardV
 
 		// Update UUID fields only if ExecuteAt changed (we need to regenerate the UUID)
 		timerUuid := databases.GenerateTimerUUID(namespace, request.TimerId)
-		timerUuidHigh, timerUuidLow := databases.UuidToHighLow(timerUuid)
-		updateDoc["timer_uuid_high"] = timerUuidHigh
-		updateDoc["timer_uuid_low"] = timerUuidLow
+		updateDoc["timer_uuid"] = timerUuid
 
 		if payloadJSON != nil {
 			updateDoc["timer_payload"] = payloadJSON
@@ -1011,10 +918,9 @@ func (c *MongoDBTimerStore) GetTimer(ctx context.Context, shardId int, namespace
 		return nil, databases.NewGenericDbError("failed to get timer", findErr)
 	}
 
-	// Convert UUID high/low back to UUID
-	timerUuidHigh := doc["timer_uuid_high"].(int64)
-	timerUuidLow := doc["timer_uuid_low"].(int64)
-	timerUuid := databases.HighLowToUuid(timerUuidHigh, timerUuidLow)
+	// Get UUID from document
+	timerUuid := doc["timer_uuid"].(primitive.Binary).Data
+	timerUuidGo, _ := uuid.FromBytes(timerUuid)
 
 	// Parse JSON payload and retry policy
 	var payload interface{}
@@ -1034,7 +940,7 @@ func (c *MongoDBTimerStore) GetTimer(ctx context.Context, shardId int, namespace
 
 	timer = &databases.DbTimer{
 		Id:                     timerId,
-		TimerUuid:              timerUuid,
+		TimerUuid:              timerUuidGo,
 		Namespace:              namespace,
 		ExecuteAt:              doc["timer_execute_at"].(primitive.DateTime).Time(),
 		CallbackUrl:            doc["timer_callback_url"].(string),
@@ -1049,8 +955,8 @@ func (c *MongoDBTimerStore) GetTimer(ctx context.Context, shardId int, namespace
 }
 
 func (c *MongoDBTimerStore) DeleteTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timerId string) *databases.DbError {
-	// Convert ZeroUUID to high/low format for shard records
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for shard records
+	zeroUuid := databases.ZeroUUID
 
 	// Use MongoDB transaction for atomic delete with shard version check
 	session, sessionErr := c.client.StartSession()
@@ -1071,8 +977,7 @@ func (c *MongoDBTimerStore) DeleteTimer(ctx context.Context, shardId int, shardV
 			"shard_id":         shardId,
 			"row_type":         databases.RowTypeShard,
 			"timer_execute_at": databases.ZeroTimestamp,
-			"timer_uuid_high":  zeroUuidHigh,
-			"timer_uuid_low":   zeroUuidLow,
+			"timer_uuid":       zeroUuid,
 		}
 
 		var shardDoc bson.M
