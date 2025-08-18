@@ -1,12 +1,14 @@
 package engine
 
 import (
+	"context"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/iworkflowio/durable-timer/config"
 	"github.com/iworkflowio/durable-timer/databases"
+	"github.com/iworkflowio/durable-timer/log"
 )
 
 type TimerEngine interface {
@@ -16,18 +18,18 @@ type TimerEngine interface {
 	RemoveShard(shardId int) error
 }
 
-func NewTimerEngine(config *config.Config, store databases.TimerStore) (TimerEngine, error) {
+func NewTimerEngine(config *config.Config, store databases.TimerStore, logger log.Logger) (TimerEngine, error) {
 	// TODO: implement
 	return nil, nil
 }
 
 // TimerQueue is a singleton instance for the whole Engine
-// 1. Responsible for storing the timers into memory to be processed
-// 2. Listen to the loadingBufferChannel to load the timers into the queue
-// 3. Use a double linked list to maintain the timers in order. One list per shard. 
-// 4. Pass the timers to the CallbackProcessor to be processed
-// 5. Listen from a channel from CallbackProcessor to know when a timer is completed. When a timer is completed, remove it from the list. 
-//   5.1 If the timer is the first timer in the list, send notification signals to TimerBatchDeleter 
+//  1. Responsible for storing the timers into memory to be processed
+//  2. Listen to the loadingBufferChannel to load the timers into the queue
+//  3. Use a double linked list to maintain the timers in order. One list per shard.
+//  4. Pass the timers to the CallbackProcessor to be processed
+//  5. Listen from a channel from CallbackProcessor to know when a timer is completed. When a timer is completed, remove it from the list.
+//     5.1 If the timer is the first timer in the list, send notification signals to TimerBatchDeleter
 type TimerQueue interface {
 	Start() error
 	// Close the timer queue
@@ -35,7 +37,7 @@ type TimerQueue interface {
 }
 
 func NewTimerQueue(
-	config *config.Config,
+	config *config.Config, logger log.Logger,
 	loadingBufferChannel <-chan *databases.DbTimer, // the receive-only channel to pass the timers to be loaded into the queue
 	committedOffsetNotificationChannel *OffsetChannelPerShard, // the send-only channels to notify the committed offset changes
 	processingChannel chan<- *databases.DbTimer, // the send-only channel to send the fired timer to the callback processor
@@ -45,14 +47,31 @@ func NewTimerQueue(
 	return nil, nil
 }
 
-type TimerOffset struct{
+type TimerOffset struct {
 	Timestamp time.Time
-	Uuid uuid.UUID
+	Uuid      uuid.UUID
 }
 
 type OffsetChannelPerShard struct {
 	channels map[int]chan *TimerOffset
 	sync.Mutex
+}
+
+type ShadOwnership interface {
+	GetShardId() int
+	// GetOwnershipLossChannel returns a channel that will be closed when the shard ownership is lost
+	GetOwnershipLossChannel() <-chan struct{}
+	// UpdateShardMetadata updates the shard metadata
+	// The ownership is lost, this will return an error
+	UpdateShardMetadata(ctx context.Context, metadata *databases.ShardMetadata) error
+	// ReleaseOwnership releases the shard ownership
+	ReleaseOwnership()
+}
+
+func NewShardOwnership(
+	ctx context.Context, logger log.Logger, currentAddress string, shardId int, store databases.TimerStore,
+) (ShadOwnership, error) {
+	return newShardOwnershipImpl(ctx, logger, currentAddress, shardId, store)
 }
 
 // CallbackProcessor should be a singleton instance for the whole Engine
@@ -66,7 +85,7 @@ type CallbackProcessor interface {
 }
 
 func NewCallbackProcessor(
-	config *config.Config,
+	config *config.Config, logger log.Logger,
 	processingChannel <-chan *databases.DbTimer, // the receive-only channel to receive the fired timer from the timer queue to be processed
 	processingCompletedChannel chan<- *databases.DbTimer, // the send-only channel to send the completed timer to the timer queue
 ) (CallbackProcessor, error) {
@@ -83,10 +102,10 @@ type TimerBatchReader interface {
 }
 
 func NewTimerBatchReader(
-	config *config.Config,
-	shardId int,
+	config *config.Config, logger log.Logger,
+	shard ShadOwnership,
 	loadingBufferChannel chan<- *databases.DbTimer, // send-only channel to pass the timers to the timer queue
-	store databases.TimerStore, 
+	store databases.TimerStore,
 ) (TimerBatchReader, error) {
 	// TODO: implement
 	return nil, nil
@@ -101,16 +120,10 @@ type TimerBatchDeleter interface {
 }
 
 func NewTimerBatchDeleter(
-	config *config.Config,
-	shardId int,
+	config *config.Config, logger log.Logger,
+	shard ShadOwnership,
 	offsetNotificationChannel <-chan *TimerOffset, // the receive-only channel to receive the committed offset from the timer queue
-	store databases.TimerStore, 
+	store databases.TimerStore,
 ) (TimerBatchDeleter, error) {
-	return &batchDeleterImpl{
-		config: config,
-		shardId: shardId,
-		offsetNotificationChannel: offsetNotificationChannel,
-		store: store,
-		closeChan: make(chan struct{}),
-	}, nil
+	return newBatchDeleterImpl(config, logger, shard, offsetNotificationChannel, store)
 }

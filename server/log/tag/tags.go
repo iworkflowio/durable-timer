@@ -165,6 +165,16 @@ func Value(v interface{}) Tag {
 	return newObjectTag("value", v)
 }
 
+
+// Current returns tag for Current
+func Current(v interface{}) Tag {
+	return newObjectTag("current", v)
+}
+
+func Prev(v interface{}) Tag {
+	return newObjectTag("prev", v)
+}
+
 // ValueType returns tag for ValueType
 func ValueType(v interface{}) Tag {
 	return newStringTag("value-type", fmt.Sprintf("%T", v))
@@ -203,4 +213,9 @@ func Bool(b bool) Tag {
 // SysStackTrace returns tag for SysStackTrace
 func SysStackTrace(stackTrace string) Tag {
 	return newStringTag("sys-stack-trace", stackTrace)
+}
+
+// ShardId returns tag for ShardId
+func ShardId(shardId int) Tag {
+	return newInt("shard-id", shardId)
 }

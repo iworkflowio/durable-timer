@@ -63,6 +63,11 @@ func setEngineDefaults(engine *EngineConfig) {
 		engine.ShardEngineShutdownTimeout = 2 * time.Second
 	}
 
+	// DatabaseAPITimeout default is 10 seconds
+	if engine.DatabaseAPITimeout == 0 {
+		engine.DatabaseAPITimeout = 10 * time.Second
+	}
+
 	// Set defaults for nested configs
 	setCallbackProcessorDefaults(&engine.CallbackProcessorConfig)
 	setTimerQueueDefaults(&engine.TimerQueueConfig)

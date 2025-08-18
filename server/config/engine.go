@@ -43,6 +43,10 @@ type EngineConfig struct {
 	// TimerBatchReaderConfig is the config for the TimerBatchReader
 	// Note that timer batch reader is one instance per shard
 	TimerBatchReaderConfig TimerBatchReaderConfig
+
+	// DatabaseAPITimeout is the timeout for the database API calls
+	// Default is 10 seconds
+	DatabaseAPITimeout time.Duration
 }
 
 // TimerBatchDeleterConfig is the config for the TimerBatchDeleter
