@@ -335,15 +335,15 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_InsertInDeleteRange(t *testing
 	// Verify that ONLY the expected timers exist in the range
 	var totalInRange int
 	rangeQuery := `SELECT COUNT(*) FROM timers WHERE shard_id = ? AND row_type = ? 
-	               AND (timer_execute_at, timer_uuid_high, timer_uuid_low) >= (?, ?, ?)
-	               AND (timer_execute_at, timer_uuid_high, timer_uuid_low) <= (?, ?, ?)`
+	               AND (timer_execute_at, timer_uuid) >= (?, ?)
+	               AND (timer_execute_at, timer_uuid) <= (?, ?)`
 
-	startUuidHigh, startUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
-	endUuidHigh, endUuidLow := databases.UuidToHighLow(databases.GenerateTimerUUID("max", "max"))
+	startUuid := databases.ZeroUUID
+	endUuid := databases.GenerateTimerUUID("max", "max")
 
 	scanErr = store.db.QueryRow(rangeQuery, shardId, databases.RowTypeTimer,
-		now.Add(4*time.Minute), startUuidHigh, startUuidLow,
-		now.Add(9*time.Minute), endUuidHigh, endUuidLow).Scan(&totalInRange)
+		now.Add(4*time.Minute), startUuid[:],
+		now.Add(9*time.Minute), endUuid[:]).Scan(&totalInRange)
 	require.NoError(t, scanErr)
 	assert.Equal(t, 2, totalInRange, "Only the 2 newly inserted timers should exist in the range")
 }

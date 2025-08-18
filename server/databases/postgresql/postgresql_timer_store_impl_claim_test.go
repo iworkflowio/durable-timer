@@ -25,8 +25,8 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 	shardId := 1
 	ownerAddr := "test-owner-123"
 
-	// Convert ZeroUUID to high/low format for test queries
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for test queries
+	zeroUuid := databases.ZeroUUID
 
 	// Claim ownership of a new shard
 	prevShardInfo, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
@@ -44,8 +44,8 @@ func TestClaimShardOwnership_NewShard(t *testing.T) {
 	var dbOwnerAddr string
 	var dbMetadata string
 	var dbClaimedAt time.Time
-	query := "SELECT shard_version, shard_owner_addr, shard_metadata, shard_claimed_at FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5"
-	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerAddr, &dbMetadata, &dbClaimedAt)
+	query := "SELECT shard_version, shard_owner_addr, shard_metadata, shard_claimed_at FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid = $4"
+	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid).Scan(&dbVersion, &dbOwnerAddr, &dbMetadata, &dbClaimedAt)
 
 	require.Nil(t, scanErr)
 	// For new shard, metadata should be default (empty)
@@ -91,14 +91,14 @@ func TestClaimShardOwnership_ExistingShard(t *testing.T) {
 	assert.Equal(t, int64(3), current3.ShardVersion)
 	assert.Equal(t, "owner-1", current3.OwnerAddr)
 
-	// Convert ZeroUUID to high/low format for test queries
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for test queries
+	zeroUuid := databases.ZeroUUID
 
 	// Verify final state
 	var dbVersion int64
 	var dbOwnerAddr string
-	query := "SELECT shard_version, shard_owner_addr FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5"
-	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerAddr)
+	query := "SELECT shard_version, shard_owner_addr FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid = $4"
+	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid).Scan(&dbVersion, &dbOwnerAddr)
 
 	require.Nil(t, scanErr)
 	assert.Equal(t, int64(3), dbVersion)
@@ -169,14 +169,14 @@ func TestClaimShardOwnership_ConcurrentClaims(t *testing.T) {
 	assert.Greater(t, failureCount, 0, "Should have some failures due to concurrency")
 	assert.Greater(t, maxVersion, int64(0), "Maximum version should be positive")
 
-	// Convert ZeroUUID to high/low format for test queries
-	zeroUuidHigh, zeroUuidLow := databases.UuidToHighLow(databases.ZeroUUID)
+	// Use ZeroUUID for test queries
+	zeroUuid := databases.ZeroUUID
 
 	// Verify final database state
 	var dbVersion int64
 	var dbOwnerAddr string
-	query := "SELECT shard_version, shard_owner_addr FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid_high = $4 AND timer_uuid_low = $5"
-	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuidHigh, zeroUuidLow).Scan(&dbVersion, &dbOwnerAddr)
+	query := "SELECT shard_version, shard_owner_addr FROM timers WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid = $4"
+	scanErr := store.db.QueryRow(query, shardId, databases.RowTypeShard, databases.ZeroTimestamp, zeroUuid).Scan(&dbVersion, &dbOwnerAddr)
 
 	require.Nil(t, scanErr)
 	assert.Equal(t, maxVersion, dbVersion, "Database version should match highest successful claim")

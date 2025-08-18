@@ -16,10 +16,11 @@ This document outlines the design for a timer engine that manages timer executio
 ## Core Design Challenges
 
 1. **Efficiency vs Accuracy**: Balance between database query frequency and timer precision
-2. **Memory Management**: Control memory usage while preloading future timers
+2. **Memory Management**: Control memory usage for loaded fired timers
 3. **Consistency**: Handle concurrent timer additions during processing windows
 4. **Batch Operations**: Optimize database operations for high throughput
 5. **Fault Tolerance**: Ensure no timer loss during failures
+6. **Cache Consistency**: Avoid complex caching mechanisms that introduce race conditions with timer updates/deletions
 
 ## ⚠️ **Important Note: Pseudo-Code Implementation**
 
@@ -27,7 +28,7 @@ This document outlines the design for a timer engine that manages timer executio
 
 ---
 
-## Approach 1: Load Only Fired Timers + Look-Ahead
+## Approach 1: Load Only Fired Timers + Look-Ahead (Recommended)
 
 ### Design Overview
 
@@ -191,272 +192,32 @@ Time: 10:00:10 - Load timers up to 10:00:11 (triggered by AddTimer)
 - **Adaptive**: Optimized for sparse timers, or very dense timer distribution
 
 **❌ Disadvantages:**
-- **High Database Load**: Frequent small queries for reads
-- **Wake-up Overhead**: Many wake-ups for even timer distributions. E.g. if there is one timer per second, then there will be one read every second. 
+- **Higher Database Read Frequency**: More frequent small queries compared to preloading approaches
+- **Wake-up Overhead**: Requires more wake-ups for evenly distributed timers (e.g., one query per second for one timer per second)
 
----
+### Optimizations for Production
 
-## Approach 2: PreLoad Future Timers + Range Deletion (Recommended)
+To maximize the efficiency of this approach in production:
 
-### Design Overview
+#### 1. **Intelligent Batching**
+- Batch process multiple fired timers in each processing cycle
+- Accumulate timers for batch deletion (delete every 30-60 seconds)
+- Use appropriate database connection pooling and query optimization
 
-**Strategy**: Preload future timers with efficient range deletion
-**Key Principle**: Maintain comprehensive in-memory view to enable safe range deletion
+#### 2. **Adaptive Scheduling**
+- Dynamically adjust load intervals based on timer density patterns
+- Use exponential backoff when no timers are found
+- Implement smart wake-up scheduling based on known future timers
 
-### Architecture Components
+#### 3. **Database Optimizations**
+- Ensure proper indexing on (shard_id, row_type, timer_execute_at)
+- Use database-specific optimizations for timestamp-based queries
+- Consider read replicas for timer loading to reduce load on primary database
 
-```mermaid
-graph TD
-    A["Timer Engine<br/>Approach 2: PreLoad + Range Delete"] --> B["Preload Thread"]
-    A --> C["Comprehensive Memory Queue"]
-    A --> D["Process Thread"]
-    A --> E["Range Delete Thread"]
-    A --> F["Memory Manager"]
-    
-    B --> G["Database Query<br/>SELECT ... WHERE timer_execute_at BETWEEN NOW() AND NOW() + 2min<br/>LIMIT 50000"]
-    G --> H["Load into Priority Queue<br/>~50,000-200,000 timers"]
-    
-    C --> I["Maintains Complete View<br/>of Time Windows"]
-    I --> J["Sorted by Execute Time"]
-    
-    D --> K["Execute Timers"]
-    K --> L["Track Completed Range"]
-    
-    E --> M["Range Delete<br/>DELETE ... WHERE timer_execute_at BETWEEN ? AND ?"]
-    M --> N["Delete 1,000-10,000 timers per batch"]
-    
-    F --> O{"Memory Pressure?"}
-    O -->|High| P["Reduce Preload Window<br/>Trigger Early Range Delete"]
-    O -->|Normal| Q["Continue Normal Operation"]
-    
-    R["New Timer Request"] --> S["Write to Database"]
-    S --> T{"Any Error Except Validation?"}
-    T -->|Yes| U["Add to Memory Queue<br/>(Comprehensive View)"]
-    T -->|No - Success| V["Add to Memory Queue"]
-    T -->|Validation Error| W["Don't Add to Memory"]
-    
-    style A fill:#e8f5e8
-    style H fill:#c8e6c9
-    style M fill:#a5d6a7
-    style F fill:#ffecb3
-```
-
-### Detailed Workflow
-
-#### Comprehensive Loading Strategy
-
-**Engine Structure**: The Approach2Engine implements the "preload future timers + range deletion" strategy with comprehensive memory management. It maintains a large in-memory priority queue for upcoming timers (2-minute window), tracks loaded time ranges to enable safe range deletion, and includes memory pressure controls to prevent runaway memory usage during high timer creation rates.
-
-```go
-type Approach2Engine struct {
-    preloadWindow      time.Duration     // 2 minutes
-    rangeDeleteWindow  time.Duration     // 30 seconds
-    timerQueue         *TimerPriorityQueue
-    completedTimers    *TimestampTracker
-    loadedRanges       []TimeRange
-    maxMemoryTimers    int               // 100,000
-}
-
-// **Bulk Timer Preloading**: This function implements the core preloading strategy by fetching a large batch of future timers (2-minute window) from the database and loading them into the in-memory priority queue. It tracks the loaded time range to enable safe range deletion later, ensuring the engine maintains a comprehensive view of all timers in its time window for efficient range-based cleanup operations.
-
-func (e *Approach2Engine) PreloadTimers() {
-    now := time.Now()
-    endTime := now.Add(e.preloadWindow)
-    
-    timers := e.db.GetTimersInRange(e.shardID, now, endTime)
-    
-    for _, timer := range timers {
-        e.timerQueue.Push(timer)
-    }
-    
-    e.loadedRanges = append(e.loadedRanges, TimeRange{now, endTime})
-    e.scheduleNextPreload()
-}
-
-// **Comprehensive Timer Addition**: This function implements the critical "comprehensive view" strategy for safe range deletion. It persists new timers to the database first, then uses conservative logic to add timers to memory: for unknown database errors (timeouts, network issues), it adds the timer to memory anyway to prevent timer loss, while only skipping memory addition for explicit validation errors. This ensures the in-memory queue maintains a complete view of all timers in its time window.
-
-func (e *Approach2Engine) AddNewTimer(timer Timer) error {
-    // Critical: Always maintain comprehensive view
-    err := e.db.CreateTimer(timer)
-    
-    // For ANY error except explicit validation errors, add to memory
-    if err != nil && !isValidationError(err) {
-        // Unknown error (timeout, network, etc.) - add to memory anyway
-        if timer.ExecuteAt.Before(e.getLoadedUntil()) {
-            e.timerQueue.Push(timer)
-            log.Warn("Added timer to memory despite DB error", 
-                     "error", err, "timer", timer.ID)
-        }
-        return err
-    }
-    
-    // Successful DB write or validation error - add to memory if in range
-    if err == nil && timer.ExecuteAt.Before(e.getLoadedUntil()) {
-        e.timerQueue.Push(timer)
-    }
-    
-    return err
-}
-
-// **Timer Processing and Batch Cleanup**: This function implements the main processing loop that executes timers with efficient batch cleanup. It continuously monitors the priority queue for fired timers, executes their callbacks, and accumulates successfully completed timers for batch range deletion. The batching strategy minimizes database operations while the range deletion capability (enabled by the comprehensive view) provides dramatic efficiency gains over individual timer deletion.
-
-func (e *Approach2Engine) ProcessAndCleanup() {
-    completedBatch := []Timer{}
-    
-    for {
-        timer := e.timerQueue.Peek()
-        if timer == nil || timer.ExecuteAt.After(time.Now()) {
-            // Process completed batch if ready
-            if len(completedBatch) > 0 && e.shouldRangeDelete() {
-                e.performRangeDelete(completedBatch)
-                completedBatch = []Timer{}
-            }
-            time.Sleep(100 * time.Millisecond)
-            continue
-        }
-        
-        timer = e.timerQueue.Pop()
-        success := e.executeTimer(timer)
-        
-        if success {
-            completedBatch = append(completedBatch, timer)
-        }
-    }
-}
-
-// **Efficient Range Deletion**: This function performs the key efficiency optimization of Approach 2 by deleting multiple completed timers in a single database operation. It calculates the time range from the first to last completed timer and issues a range-based DELETE statement, which can remove thousands of timers in one operation instead of thousands of individual DELETE statements. This is only safe because the engine maintains a comprehensive view of all timers in the time range.
-
-func (e *Approach2Engine) performRangeDelete(timers []Timer) {
-    if len(timers) == 0 {
-        return
-    }
-    
-    startTime := timers[0].ExecuteAt
-    endTime := timers[len(timers)-1].ExecuteAt
-    
-    // Safe range delete - we have comprehensive view
-    deletedCount := e.db.DeleteTimersInRange(e.shardID, startTime, endTime)
-    
-    log.Info("Range deleted timers", 
-             "count", deletedCount, 
-             "range", fmt.Sprintf("%v to %v", startTime, endTime))
-}
-```
-
-
-
-### Range Deletion Safety
-
-**Comprehensive View Guarantee**:
-
-**Safety Check for Range Deletion**: This function ensures that range deletion operations are only performed when the engine has a complete view of all timers in the target time range. It validates that the deletion range falls entirely within a previously loaded time range, preventing accidental deletion of timers that weren't loaded into memory. This safety check is critical for the correctness of the range deletion optimization.
-
-```go
-func (e *Approach2Engine) canSafelyRangeDelete(startTime, endTime time.Time) bool {
-    // Only delete if we have comprehensive view of the time range
-    for _, loadedRange := range e.loadedRanges {
-        if loadedRange.Contains(startTime, endTime) {
-            return true
-        }
-    }
-    return false
-}
-```
-
-### Example Timeline with Memory Management
-
-```
-Time: 10:00:00 - Preload timers 10:00:00 to 10:02:00
-├── Loaded: 50,000 timers (normal load)
-├── Memory usage: ~50MB
-└── Preload window: 2 minutes
-
-Time: 10:00:30 - High timer creation rate detected
-├── New timers: +20,000 in 30 seconds
-├── Total memory: 70,000 timers
-├── Memory pressure: NORMAL
-└── Continue normal operation
-
-Time: 10:01:00 - Memory pressure spike
-├── Current timers: 95,000 (approaching 100K limit)
-├── Action: Reduce preload window to 1.6 minutes
-├── Action: Trigger early range delete
-└── Range delete: 10:00:00-10:00:30 (15,000 completed timers)
-
-Time: 10:01:15 - Memory under control
-├── Current timers: 80,000
-├── Memory pressure: NORMAL
-└── Resume normal operations
-
-Range Deletion Example:
-├── Completed timers in range 10:00:00-10:00:30: 15,000 timers
-├── Safety check: Comprehensive view? YES
-├── Range delete: DELETE FROM timers WHERE ... AND timer_execute_at BETWEEN '10:00:00' AND '10:00:30'
-└── Result: 15,000 timers deleted in single operation
-```
-
-### Fault Tolerance and Recovery
-
-**Crash Recovery**:
-
-**Simple Recovery Strategy**: This function handles engine restart scenarios by simply reloading timers from the database. Since all timer state is durably persisted in the database, recovery is straightforward - any timers that were in memory before the crash are automatically reloaded from the database, and processing continues normally. This approach prioritizes simplicity and reliability over optimization of recovery time.
-
-```go
-func (e *Approach2Engine) recover() error {
-    // On startup, immediately preload and continue
-    // Any timers that were in memory are automatically reloaded from DB
-    return e.PreloadTimers()
-}
-```
-
-**Split-brain Protection**:
-
-**Shard Ownership Validation**: This function prevents split-brain scenarios in distributed deployments by continuously validating that the current instance still owns its assigned shard. It uses the database's optimistic concurrency control mechanism to check shard ownership and immediately stops timer processing if ownership has been lost to another instance. This ensures that only one instance processes timers for each shard at any given time, preventing duplicate timer execution.
-
-```go
-func (e *Approach2Engine) validateShardOwnership() bool {
-    ownership, err := e.db.ClaimShardOwnership(e.shardID, e.instanceID, nil)
-    if err != nil || ownership.OwnerAddr != e.instanceID {
-        log.Error("Lost shard ownership, stopping timer processing")
-        e.stop()
-        return false
-    }
-    return true
-}
-```
-
-### Performance Characteristics
-
-**Memory Usage**: 
-- **High**: 2-minute window (~50,000-200,000 timers)
-- **Dynamic**: Scales with memory pressure management
-- **Typical**: 50-100MB per shard
-
-**Database Load**:
-- **Read Frequency**: Every 2 minutes  
-- **Read Size**: Very large batches (50,000+ timers)
-- **Delete Frequency**: Every 30 seconds
-- **Delete Size**: Range operations (1,000-10,000 timers per batch)
-
-**Efficiency Gains**:
-- **120x fewer DELETE operations** vs individual deletion approach
-- **120x fewer READ operations** vs Approach 1  
-- **95% reduction in database load**
-
-### Advantages and Disadvantages
-
-**✅ Advantages:**
-- **Highest Efficiency**: Minimal database operations
-- **Range Deletion**: Very efficient cleanup
-- **Sub-second Precision**: Excellent timer accuracy
-- **Comprehensive View**: Safe deletion guarantees
-- **Memory Management**: Adaptive to pressure
-
-**❌ Disadvantages:**
-- **High Memory Usage**: Significant memory footprint
-- **Complex Implementation**: Sophisticated logic required
-- **Memory Pressure Risk**: Needs careful monitoring
-- **Operational Complexity**: Requires memory tuning
+#### 4. **Memory Management**
+- Keep fired timers in memory only until successful callback execution
+- Implement bounded queues to prevent memory issues during processing delays
+- Monitor memory usage and processing queue depths 
 
 ---
 
@@ -468,10 +229,55 @@ func (e *Approach2Engine) validateShardOwnership() bool {
 
 
 
-## Recommended Implementation: Approach 2
+## Recommended Implementation: Approach 1 (Load Only Fired Timers)
 
 **Rationale**: 
-Given the system requirements of **"thousands of millions of timers"** and **"1,000,000+ executions per second"**, database efficiency is critical. Approach 2 provides:
+After careful consideration of implementation complexity and operational challenges, we have decided to implement **Approach 1: Load Only Fired Timers + Look-Ahead** as our timer engine strategy.
 
+### Why Not Preload Future Timers?
 
-The increased implementation complexity is justified by the dramatic efficiency gains required for the target scale.
+While preloading future timers (the previously considered Approach 2) offered theoretical efficiency gains, it introduced several critical challenges that make it impractical for production use:
+
+#### 1. **Unpredictable Memory Consumption**
+- After preloading timers for a 2-minute window, new timers can be inserted at any time within that range
+- Memory usage becomes unpredictable and can grow unboundedly during high timer creation periods
+- Any memory pressure mitigation (unloading timers) would eliminate the benefits of range deletion
+- This creates an unsolvable trade-off between memory control and efficiency gains
+
+#### 2. **Complex Cache Consistency Issues**
+- Preloaded timers create an in-memory cache that must stay synchronized with database updates
+- Timer updates and deletions require complex coordination between memory and database state
+- Race conditions between timer modifications and in-memory processing become numerous and difficult to handle
+- Cache invalidation strategies add significant complexity without clear benefit
+
+#### 3. **Shard Movement Edge Cases**
+- Shard ownership changes introduce eventual consistency challenges
+- Preloaded timers from previous shard owners create ambiguous ownership scenarios
+- Coordination between old and new shard owners becomes complex and error-prone
+- The distributed nature of the system makes these edge cases particularly challenging
+
+#### 4. **Operational Complexity**
+- Memory tuning and monitoring requirements increase operational burden
+- Debugging becomes significantly more complex with dual state (memory + database)
+- Performance characteristics become less predictable due to memory pressure interactions
+
+### Benefits of the Chosen Approach
+
+**Approach 1: Load Only Fired Timers** provides:
+
+- **Simplicity**: Straightforward implementation with minimal state management
+- **Predictable Memory Usage**: Only fired timers in memory, scales with execution rate not timer density
+- **No Cache Consistency**: Single source of truth (database) eliminates synchronization issues
+- **Robust Fault Tolerance**: Simple recovery model with no complex state reconstruction
+- **Operational Simplicity**: Predictable performance characteristics and easier debugging
+- **Sufficient Performance**: While not theoretically optimal, provides adequate performance for our scale
+
+### Performance Trade-offs
+
+While this approach may require more frequent database reads compared to preloading, the benefits of simplicity, correctness, and operational ease outweigh the theoretical efficiency gains of a more complex caching approach.
+
+The system can still achieve high performance through:
+- Efficient batch deletion of completed timers
+- Adaptive wake-up scheduling based on timer density
+- Optimized database queries with appropriate indexing
+- Horizontal scaling across multiple shards

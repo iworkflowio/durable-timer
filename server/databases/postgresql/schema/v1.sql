@@ -2,8 +2,7 @@ CREATE TABLE timers (
     shard_id INTEGER NOT NULL,
     row_type SMALLINT NOT NULL,
     timer_execute_at TIMESTAMP(3) NOT NULL,
-    timer_uuid_high BIGINT NOT NULL,
-    timer_uuid_low BIGINT NOT NULL,
+    timer_uuid UUID NOT NULL,
     timer_id VARCHAR(255),
     timer_namespace VARCHAR(255),
     timer_callback_url VARCHAR(2048),
@@ -17,7 +16,7 @@ CREATE TABLE timers (
     shard_metadata JSONB,
     timer_created_at TIMESTAMP(3) NOT NULL DEFAULT NOW(),
     timer_attempts INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid_high, timer_uuid_low)
+    PRIMARY KEY (shard_id, row_type, timer_execute_at, timer_uuid)
 );
 
 -- Unique index for timer lookups
