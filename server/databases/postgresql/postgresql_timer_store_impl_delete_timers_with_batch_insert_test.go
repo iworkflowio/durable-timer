@@ -637,7 +637,6 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_LargeTimestamp(t *testing.T) {
 
 	// Create timers spread across a large time range
 	now := time.Now()
-	var timers []*databases.DbTimer
 	for i := 0; i < 5; i++ {
 		timer := &databases.DbTimer{
 			Id:                     fmt.Sprintf("large-range-timer-%d", i),
@@ -648,7 +647,6 @@ func TestDeleteTimersUpToTimestampWithBatchInsert_LargeTimestamp(t *testing.T) {
 			CallbackTimeoutSeconds: 30,
 			CreatedAt:              now,
 		}
-		timers = append(timers, timer)
 		createErr := store.CreateTimer(ctx, shardId, shardVersion, namespace, timer)
 		require.Nil(t, createErr)
 	}
