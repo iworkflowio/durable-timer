@@ -629,3 +629,247 @@ func TestGetTimersUpToTimestamp_AttemptsPreservation(t *testing.T) {
 	assert.Equal(t, timer2.CallbackUrl, response.Timers[1].CallbackUrl)
 	assert.Equal(t, timer3.CallbackUrl, response.Timers[2].CallbackUrl)
 }
+
+func TestUpdateTimerNoLock_Basic(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 1
+	namespace := "test_namespace"
+
+	// Create shard record (even though NoLock doesn't use it, we need a timer to update)
+	ownerAddr := "owner-1"
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
+	require.Nil(t, err)
+
+	// Create a timer to update
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	timer := &databases.DbTimer{
+		Id:                     "test-timer-update-nolock",
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "test-timer-update-nolock"),
+		Namespace:              namespace,
+		ExecuteAt:              now.Add(10 * time.Minute),
+		CallbackUrl:            "https://example.com/callback-original",
+		CallbackTimeoutSeconds: 30,
+		CreatedAt:              now,
+		Attempts:               2,
+		Payload:                map[string]interface{}{"original": "payload"},
+		RetryPolicy:            map[string]interface{}{"maxAttempts": 3},
+	}
+
+	createErr := store.CreateTimer(ctx, shardId, shardVersion, namespace, timer)
+	require.Nil(t, createErr)
+
+	// Update the timer without shard locking
+	updateRequest := &databases.UpdateDbTimerRequest{
+		TimerId:                timer.Id,
+		ExecuteAt:              now.Add(15 * time.Minute), // Different ExecuteAt
+		CallbackUrl:            "https://example.com/callback-updated",
+		CallbackTimeoutSeconds: 60,
+		Payload:                map[string]interface{}{"updated": "payload", "number": 123},
+		RetryPolicy:            map[string]interface{}{"maxAttempts": 5, "backoff": "linear"},
+	}
+
+	updateErr := store.UpdateTimerNoLock(ctx, shardId, namespace, updateRequest)
+	require.Nil(t, updateErr)
+
+	// Verify timer was updated
+	updatedTimer, getErr := store.GetTimer(ctx, shardId, namespace, timer.Id)
+	require.Nil(t, getErr)
+	require.NotNil(t, updatedTimer)
+
+	// Verify updated fields
+	assert.Equal(t, "https://example.com/callback-updated", updatedTimer.CallbackUrl)
+	assert.Equal(t, int32(60), updatedTimer.CallbackTimeoutSeconds)
+	assert.True(t, updateRequest.ExecuteAt.Equal(updatedTimer.ExecuteAt))
+
+	// JSON deserialization converts int to float64
+	expectedPayload := map[string]interface{}{"updated": "payload", "number": float64(123)}
+	expectedRetryPolicy := map[string]interface{}{"maxAttempts": float64(5), "backoff": "linear"}
+	assert.Equal(t, expectedPayload, updatedTimer.Payload)
+	assert.Equal(t, expectedRetryPolicy, updatedTimer.RetryPolicy)
+
+	// Verify preserved fields
+	assert.Equal(t, timer.Id, updatedTimer.Id)
+	assert.Equal(t, timer.Namespace, updatedTimer.Namespace)
+	assert.True(t, timer.CreatedAt.Equal(updatedTimer.CreatedAt)) // CreatedAt should be preserved
+}
+
+func TestUpdateTimerNoLock_NotFound(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 1
+	namespace := "test_namespace"
+
+	// Try to update a non-existent timer
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	updateRequest := &databases.UpdateDbTimerRequest{
+		TimerId:                "non-existent-timer",
+		ExecuteAt:              now.Add(10 * time.Minute),
+		CallbackUrl:            "https://example.com/callback",
+		CallbackTimeoutSeconds: 30,
+		Payload:                map[string]interface{}{"test": "payload"},
+		RetryPolicy:            map[string]interface{}{"maxAttempts": 3},
+	}
+
+	updateErr := store.UpdateTimerNoLock(ctx, shardId, namespace, updateRequest)
+	require.NotNil(t, updateErr)
+	assert.True(t, databases.IsDbErrorNotExists(updateErr))
+}
+
+func TestUpdateTimerNoLock_NilPayloadAndRetryPolicy(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 1
+	namespace := "test_namespace"
+
+	// Create shard record
+	ownerAddr := "owner-1"
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
+	require.Nil(t, err)
+
+	// Create a timer with payload and retry policy
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	timer := &databases.DbTimer{
+		Id:                     "test-timer-nil-update",
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "test-timer-nil-update"),
+		Namespace:              namespace,
+		ExecuteAt:              now.Add(10 * time.Minute),
+		CallbackUrl:            "https://example.com/callback-original",
+		CallbackTimeoutSeconds: 30,
+		CreatedAt:              now,
+		Attempts:               1,
+		Payload:                map[string]interface{}{"original": "payload"},
+		RetryPolicy:            map[string]interface{}{"maxAttempts": 3},
+	}
+
+	createErr := store.CreateTimer(ctx, shardId, shardVersion, namespace, timer)
+	require.Nil(t, createErr)
+
+	// Update with nil payload and retry policy
+	updateRequest := &databases.UpdateDbTimerRequest{
+		TimerId:                timer.Id,
+		ExecuteAt:              timer.ExecuteAt,
+		CallbackUrl:            "https://example.com/callback-updated",
+		CallbackTimeoutSeconds: 45,
+		Payload:                nil, // Set to nil
+		RetryPolicy:            nil, // Set to nil
+	}
+
+	updateErr := store.UpdateTimerNoLock(ctx, shardId, namespace, updateRequest)
+	require.Nil(t, updateErr)
+
+	// Verify timer was updated with nil payload and retry policy
+	updatedTimer, getErr := store.GetTimer(ctx, shardId, namespace, timer.Id)
+	require.Nil(t, getErr)
+	require.NotNil(t, updatedTimer)
+
+	// Verify updated fields
+	assert.Equal(t, "https://example.com/callback-updated", updatedTimer.CallbackUrl)
+	assert.Equal(t, int32(45), updatedTimer.CallbackTimeoutSeconds)
+	assert.Nil(t, updatedTimer.Payload)
+	assert.Nil(t, updatedTimer.RetryPolicy)
+}
+
+func TestUpdateTimerNoLock_InvalidPayloadSerialization(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 1
+	namespace := "test_namespace"
+
+	// Try to update with an invalid payload that can't be marshaled to JSON
+	invalidPayload := map[string]interface{}{
+		"function": func() {}, // Functions can't be marshaled to JSON
+	}
+
+	updateRequest := &databases.UpdateDbTimerRequest{
+		TimerId:                "test-timer",
+		ExecuteAt:              time.Now().Add(10 * time.Minute),
+		CallbackUrl:            "https://example.com/callback",
+		CallbackTimeoutSeconds: 30,
+		Payload:                invalidPayload,
+		RetryPolicy:            nil,
+	}
+
+	updateErr := store.UpdateTimerNoLock(ctx, shardId, namespace, updateRequest)
+	require.NotNil(t, updateErr)
+	assert.Contains(t, updateErr.Error(), "failed to marshal timer payload")
+}
+
+func TestDeleteTimerNoLock_Success(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 1
+	namespace := "test_namespace"
+
+	// Create shard record
+	ownerAddr := "owner-1"
+	_, currentShardInfo, err := store.ClaimShardOwnership(ctx, shardId, ownerAddr)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	shardVersion := currentShardInfo.ShardVersion
+	require.Nil(t, err)
+
+	// Create a timer to delete
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	timer := &databases.DbTimer{
+		Id:                     "test-timer-delete-nolock",
+		TimerUuid:              databases.GenerateTimerUUID(namespace, "test-timer-delete-nolock"),
+		Namespace:              namespace,
+		ExecuteAt:              now.Add(10 * time.Minute),
+		CallbackUrl:            "https://example.com/callback-delete",
+		CallbackTimeoutSeconds: 30,
+		CreatedAt:              now,
+		Attempts:               3,
+	}
+
+	createErr := store.CreateTimer(ctx, shardId, shardVersion, namespace, timer)
+	require.Nil(t, createErr)
+
+	// Verify timer exists
+	retrievedTimer, getErr := store.GetTimer(ctx, shardId, namespace, timer.Id)
+	require.Nil(t, getErr)
+	require.NotNil(t, retrievedTimer)
+
+	// Delete the timer without shard locking
+	deleteErr := store.DeleteTimerNoLock(ctx, shardId, namespace, timer.Id)
+	require.Nil(t, deleteErr)
+
+	// Verify timer is deleted
+	deletedTimer, getErr2 := store.GetTimer(ctx, shardId, namespace, timer.Id)
+	assert.Nil(t, deletedTimer)
+	assert.NotNil(t, getErr2)
+	assert.True(t, databases.IsDbErrorNotExists(getErr2))
+}
+
+func TestDeleteTimerNoLock_NotExists(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	shardId := 1
+	namespace := "test_namespace"
+
+	// Try to delete a non-existent timer (should return not found error)
+	deleteErr := store.DeleteTimerNoLock(ctx, shardId, namespace, "non-existent-timer")
+	require.NotNil(t, deleteErr)
+	assert.True(t, databases.IsDbErrorNotExists(deleteErr))
+}

@@ -882,3 +882,143 @@ func (c *PostgreSQLTimerStore) DeleteTimer(ctx context.Context, shardId int, sha
 
 	return nil
 }
+
+func (c *PostgreSQLTimerStore) UpdateTimerNoLock(ctx context.Context, shardId int, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
+	// Serialize payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON interface{}
+
+	if request.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(request.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadJSON = string(payloadBytes)
+	}
+
+	if request.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(request.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyJSON = string(retryPolicyBytes)
+	}
+
+	// Get current timer to preserve certain fields and check if ExecuteAt changed
+	var currentExecuteAt time.Time
+	var currentTimerUuidStr string
+	var currentCreatedAt time.Time
+	var currentAttempts int32
+
+	timerQuery := `SELECT timer_execute_at, timer_uuid, timer_created_at, timer_attempts
+	               FROM timers 
+	               WHERE shard_id = $1 AND row_type = $2 AND timer_namespace = $3 AND timer_id = $4`
+
+	timerErr := c.db.QueryRowContext(ctx, timerQuery, shardId, databases.RowTypeTimer, namespace, request.TimerId).
+		Scan(&currentExecuteAt, &currentTimerUuidStr, &currentCreatedAt, &currentAttempts)
+
+	if timerErr != nil {
+		if errors.Is(timerErr, sql.ErrNoRows) {
+			return databases.NewDbErrorNotExists("timer not found for update", timerErr)
+		}
+		return databases.NewGenericDbError("failed to read current timer", timerErr)
+	}
+
+	// Check if ExecuteAt changed - if so, we need to delete and insert with new primary key
+	if !currentExecuteAt.Equal(request.ExecuteAt) {
+		// Parse current UUID and use it for the new record
+		currentTimerUuid, parseErr := uuid.Parse(currentTimerUuidStr)
+		if parseErr != nil {
+			return databases.NewGenericDbError("failed to parse current timer UUID", parseErr)
+		}
+
+		// Use a transaction to ensure atomicity of delete and insert
+		tx, txErr := c.db.BeginTx(ctx, nil)
+		if txErr != nil {
+			return databases.NewGenericDbError("failed to start PostgreSQL transaction", txErr)
+		}
+		defer tx.Rollback() // Will be no-op if transaction is committed
+
+		// Delete old record
+		deleteQuery := `DELETE FROM timers 
+		               WHERE shard_id = $1 AND row_type = $2 AND timer_execute_at = $3 AND timer_uuid = $4`
+
+		_, deleteErr := tx.ExecContext(ctx, deleteQuery, shardId, databases.RowTypeTimer,
+			currentExecuteAt, currentTimerUuid)
+
+		if deleteErr != nil {
+			return databases.NewGenericDbError("failed to delete timer for update", deleteErr)
+		}
+
+		// Insert new record with updated ExecuteAt and same UUID
+		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, 
+		                                   timer_id, timer_namespace, timer_callback_url, timer_payload, 
+		                                   timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, 
+		                                   timer_attempts) 
+		                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+
+		_, insertErr := tx.ExecContext(ctx, insertQuery,
+			shardId, databases.RowTypeTimer, request.ExecuteAt, currentTimerUuid,
+			request.TimerId, namespace, request.CallbackUrl, payloadJSON, retryPolicyJSON,
+			request.CallbackTimeoutSeconds, currentCreatedAt, currentAttempts)
+
+		if insertErr != nil {
+			return databases.NewGenericDbError("failed to insert updated timer", insertErr)
+		}
+
+		// Commit the transaction
+		if commitErr := tx.Commit(); commitErr != nil {
+			return databases.NewGenericDbError("failed to commit transaction", commitErr)
+		}
+	} else {
+		// ExecuteAt didn't change, we can do a simple UPDATE
+		updateQuery := `UPDATE timers 
+		               SET timer_callback_url = $1, timer_payload = $2, timer_retry_policy = $3, 
+		                   timer_callback_timeout_seconds = $4
+		               WHERE shard_id = $5 AND row_type = $6 AND timer_namespace = $7 AND timer_id = $8`
+
+		result, updateErr := c.db.ExecContext(ctx, updateQuery,
+			request.CallbackUrl, payloadJSON, retryPolicyJSON, request.CallbackTimeoutSeconds,
+			shardId, databases.RowTypeTimer, namespace, request.TimerId)
+
+		if updateErr != nil {
+			return databases.NewGenericDbError("failed to update timer", updateErr)
+		}
+
+		rowsAffected, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return databases.NewGenericDbError("failed to get rows affected", rowsErr)
+		}
+
+		if rowsAffected == 0 {
+			return databases.NewDbErrorNotExists("timer not found for update", nil)
+		}
+	}
+
+	return nil
+}
+
+func (c *PostgreSQLTimerStore) DeleteTimerNoLock(ctx context.Context, shardId int, namespace string, timerId string) *databases.DbError {
+	// Delete the timer using the unique index (optimized - no lookup needed)
+	deleteQuery := `DELETE FROM timers 
+	               WHERE shard_id = $1 AND row_type = $2 AND timer_namespace = $3 AND timer_id = $4`
+
+	result, deleteErr := c.db.ExecContext(ctx, deleteQuery, shardId, databases.RowTypeTimer, namespace, timerId)
+
+	if deleteErr != nil {
+		return databases.NewGenericDbError("failed to delete timer", deleteErr)
+	}
+
+	// Check how many rows were affected to determine if timer existed
+	rowsAffected, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		return databases.NewGenericDbError("failed to get rows affected", rowsErr)
+	}
+
+	// Check if timer actually existed and was deleted
+	// rowsAffected == 0 means timer didn't exist, rowsAffected == 1 means timer was deleted
+	if rowsAffected == 0 {
+		return databases.NewDbErrorNotExists("timer not found", nil)
+	}
+
+	return nil
+}

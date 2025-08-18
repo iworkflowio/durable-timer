@@ -822,3 +822,183 @@ func (c *CassandraTimerStore) DeleteTimer(ctx context.Context, shardId int, shar
 
 	return nil
 }
+
+func (c *CassandraTimerStore) UpdateTimerNoLock(ctx context.Context, shardId int, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
+	// Serialize new payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON interface{}
+
+	if request.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(request.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadJSON = string(payloadBytes)
+	}
+
+	if request.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(request.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyJSON = string(retryPolicyBytes)
+	}
+
+	// Lookup the timer's primary key components (without shard version check)
+	// Use the secondary index on timer_id and filter results in application code
+	lookupQuery := `SELECT shard_id, row_type, timer_execute_at, timer_uuid, timer_created_at, timer_namespace FROM timers 
+	                WHERE shard_id = ? AND timer_id = ?`
+
+	iter := c.session.Query(lookupQuery, shardId, request.TimerId).
+		WithContext(ctx).
+		Iter()
+
+	var found bool
+
+	// Scan through results and find the one matching our shard, row type, and namespace
+	var resultShardId int
+	var resultRowType int16
+	var resultExecuteAt, resultCreatedAt time.Time
+	var resultUuid gocql.UUID
+	var resultNamespace string
+
+	for iter.Scan(&resultShardId, &resultRowType, &resultExecuteAt, &resultUuid, &resultCreatedAt, &resultNamespace) {
+		if resultShardId == shardId && resultRowType == databases.RowTypeTimer && resultNamespace == namespace {
+			found = true
+			break
+		}
+	}
+
+	if err2 := iter.Close(); err2 != nil {
+		return databases.NewGenericDbError("failed to close lookup iterator", err2)
+	}
+
+	if !found {
+		return databases.NewDbErrorNotExists("timer not found for update", nil)
+	}
+
+	// Compare times with tolerance for Cassandra precision loss (nanoseconds -> microseconds)
+	timeDiff := request.ExecuteAt.Sub(resultExecuteAt)
+	if timeDiff >= -time.Millisecond && timeDiff <= time.Millisecond {
+		// Same execution time - can do direct UPDATE using existing primary key
+		// No locking, so no shard version check, just update if timer exists
+		updateQuery := `UPDATE timers SET timer_callback_url = ?, timer_payload = ?, timer_retry_policy = ?, timer_callback_timeout_seconds = ?, timer_attempts = ? 
+		                WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF EXISTS`
+
+		applied, err := c.session.Query(updateQuery,
+			request.CallbackUrl,
+			payloadJSON,
+			retryPolicyJSON,
+			request.CallbackTimeoutSeconds,
+			0, // Reset attempts on update
+			shardId,
+			databases.RowTypeTimer,
+			resultExecuteAt,
+			resultUuid,
+		).WithContext(ctx).ScanCAS(nil)
+
+		if err != nil {
+			return databases.NewGenericDbError("failed to execute update query", err)
+		}
+
+		if !applied {
+			// Timer was deleted between lookup and update
+			return databases.NewDbErrorNotExists("timer not found", nil)
+		}
+	} else {
+		// Different execution time - need delete+insert because timer_execute_at is part of primary key
+		// No locking, so we'll use a batch but without shard version check
+		batch := c.session.NewBatch(gocql.LoggedBatch).WithContext(ctx)
+
+		// Delete the old timer entry
+		deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF EXISTS`
+		batch.Query(deleteQuery, shardId, databases.RowTypeTimer, resultExecuteAt, resultUuid)
+
+		// Insert the timer with new execution time
+		insertQuery := `INSERT INTO timers (shard_id, row_type, timer_execute_at, timer_uuid, timer_id, timer_namespace, timer_callback_url, timer_payload, timer_retry_policy, timer_callback_timeout_seconds, timer_created_at, timer_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		batch.Query(insertQuery,
+			shardId,
+			databases.RowTypeTimer,
+			request.ExecuteAt,
+			resultUuid,
+			request.TimerId,
+			namespace,
+			request.CallbackUrl,
+			payloadJSON,
+			retryPolicyJSON,
+			request.CallbackTimeoutSeconds,
+			resultCreatedAt, // Keep original creation time
+			0,               // Reset attempts on update
+		)
+
+		// Execute the batch atomically
+		previous := make(map[string]interface{})
+		applied, iter, batchErr := c.session.MapExecuteBatchCAS(batch, previous)
+		if iter != nil {
+			iter.Close()
+		}
+
+		if batchErr != nil {
+			return databases.NewGenericDbError("failed to execute atomic update batch", batchErr)
+		}
+
+		if !applied {
+			// Timer was deleted between lookup and batch execution
+			return databases.NewDbErrorNotExists("timer not found", nil)
+		}
+	}
+
+	return nil
+}
+
+func (c *CassandraTimerStore) DeleteTimerNoLock(ctx context.Context, shardId int, namespace string, timerId string) *databases.DbError {
+	// Find the timer's primary key components (execute_at, uuid)
+	// This lookup is done without any shard version checking
+	lookupQuery := `SELECT shard_id, row_type, timer_execute_at, timer_uuid, timer_namespace FROM timers 
+	                WHERE shard_id = ? AND timer_id = ?`
+
+	iter := c.session.Query(lookupQuery, shardId, timerId).
+		WithContext(ctx).
+		Iter()
+
+	// Scan through results and find the one matching our shard, row type, and namespace
+	var resultShardId int
+	var resultRowType int16
+	var resultExecuteAt time.Time
+	var resultUuid gocql.UUID
+	var resultNamespace string
+	var found bool
+
+	for iter.Scan(&resultShardId, &resultRowType, &resultExecuteAt, &resultUuid, &resultNamespace) {
+		if resultShardId == shardId && resultRowType == databases.RowTypeTimer && resultNamespace == namespace {
+			found = true
+			break
+		}
+	}
+
+	if err := iter.Close(); err != nil {
+		return databases.NewGenericDbError("failed to close lookup iterator", err)
+	}
+
+	if !found {
+		// Timer doesn't exist - return NotExists error
+		return databases.NewDbErrorNotExists("timer not found", nil)
+	}
+
+	// Delete the timer using primary key with IF EXISTS (no shard version check)
+	deleteQuery := `DELETE FROM timers WHERE shard_id = ? AND row_type = ? AND timer_execute_at = ? AND timer_uuid = ? IF EXISTS`
+
+	applied, err := c.session.Query(deleteQuery, shardId, databases.RowTypeTimer, resultExecuteAt, resultUuid).
+		WithContext(ctx).
+		ScanCAS(nil)
+
+	if err != nil {
+		return databases.NewGenericDbError("failed to execute delete query", err)
+	}
+
+	if !applied {
+		// Timer was deleted between lookup and delete (race condition)
+		return databases.NewDbErrorNotExists("timer not found", nil)
+	}
+
+	return nil
+}

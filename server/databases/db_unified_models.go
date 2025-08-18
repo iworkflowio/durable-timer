@@ -113,7 +113,6 @@ type (
 		TimerId string
 
 		// New execution time for the timer
-		// TODO remove this support to simplify the engine implementation
 		ExecuteAt time.Time
 
 		// New callback URL, returning 200 with CallbackResponse means success, otherwise will be retried.

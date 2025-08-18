@@ -64,6 +64,7 @@ type (
 			request *UpdateDbTimerRequest,
 		) (err *DbError)
 
+
 		GetTimer(
 			ctx context.Context,
 			shardId int, namespace string, timerId string,
@@ -72,6 +73,18 @@ type (
 		DeleteTimer(
 			ctx context.Context,
 			shardId int, shardVersion int64, namespace string, timerId string,
+		) *DbError
+
+		UpdateTimerNoLock(
+			ctx context.Context,
+			shardId int, namespace string,
+			request *UpdateDbTimerRequest,
+		) (err *DbError)
+
+
+		DeleteTimerNoLock(
+			ctx context.Context,
+			shardId int, namespace string, timerId string,
 		) *DbError
 	}
 )

@@ -1037,6 +1037,116 @@ func (d *DynamoDBTimerStore) GetTimer(ctx context.Context, shardId int, namespac
 	return timer, nil
 }
 
+func (d *DynamoDBTimerStore) UpdateTimerNoLock(ctx context.Context, shardId int, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
+	// For DynamoDB, ExecuteAt is part of the LSI sort key, making ExecuteAt changes complex (requires delete+insert)
+	// To keep the implementation simple and optimized, we don't support ExecuteAt updates
+	if !request.ExecuteAt.IsZero() {
+		return databases.NewDbErrorNotSupport("UpdateTimerNoLock does not support ExecuteAt changes in DynamoDB implementation", nil)
+	}
+
+	// Construct the sort key for the timer
+	timerSortKey := GetTimerSortKey(namespace, request.TimerId)
+
+	// Serialize payload and retry policy if provided
+	var payloadJSON, retryPolicyJSON *string
+	if request.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(request.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadStr := string(payloadBytes)
+		payloadJSON = &payloadStr
+	}
+
+	if request.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(request.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyStr := string(retryPolicyBytes)
+		retryPolicyJSON = &retryPolicyStr
+	}
+
+	// Build update expression and attribute values
+	updateExpressions := []string{}
+	expressionAttributeValues := map[string]types.AttributeValue{}
+
+	// Update specific fields
+	if request.CallbackUrl != "" {
+		updateExpressions = append(updateExpressions, "timer_callback_url = :callback_url")
+		expressionAttributeValues[":callback_url"] = &types.AttributeValueMemberS{Value: request.CallbackUrl}
+	}
+
+	if request.CallbackTimeoutSeconds > 0 {
+		updateExpressions = append(updateExpressions, "timer_callback_timeout_seconds = :timeout_seconds")
+		expressionAttributeValues[":timeout_seconds"] = &types.AttributeValueMemberN{Value: strconv.Itoa(int(request.CallbackTimeoutSeconds))}
+	}
+
+	if payloadJSON != nil {
+		updateExpressions = append(updateExpressions, "timer_payload = :payload")
+		expressionAttributeValues[":payload"] = &types.AttributeValueMemberS{Value: *payloadJSON}
+	}
+
+	if retryPolicyJSON != nil {
+		updateExpressions = append(updateExpressions, "timer_retry_policy = :retry_policy")
+		expressionAttributeValues[":retry_policy"] = &types.AttributeValueMemberS{Value: *retryPolicyJSON}
+	}
+
+	if len(updateExpressions) == 0 {
+		return nil // Nothing to update
+	}
+
+	// Perform update without shard version check (NoLock version)
+	updateInput := &dynamodb.UpdateItemInput{
+		TableName: aws.String(d.tableName),
+		Key: map[string]types.AttributeValue{
+			"shard_id": &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+			"sort_key": &types.AttributeValueMemberS{Value: timerSortKey},
+		},
+		UpdateExpression:          aws.String("SET " + strings.Join(updateExpressions, ", ")),
+		ConditionExpression:       aws.String("attribute_exists(sort_key)"),
+		ExpressionAttributeValues: expressionAttributeValues,
+	}
+
+	_, updateErr := d.client.UpdateItem(ctx, updateInput)
+	if updateErr != nil {
+		if isConditionalCheckFailedException(updateErr) {
+			// Timer doesn't exist
+			return databases.NewDbErrorNotExists("timer not found", updateErr)
+		}
+		return databases.NewGenericDbError("failed to update timer", updateErr)
+	}
+
+	return nil
+}
+
+func (d *DynamoDBTimerStore) DeleteTimerNoLock(ctx context.Context, shardId int, namespace string, timerId string) *databases.DbError {
+	// Construct the sort key for the timer
+	timerSortKey := GetTimerSortKey(namespace, timerId)
+
+	// Delete the timer with condition check to ensure it exists
+	// This matches the behavior of MySQL and PostgreSQL implementations
+	deleteInput := &dynamodb.DeleteItemInput{
+		TableName: aws.String(d.tableName),
+		Key: map[string]types.AttributeValue{
+			"shard_id": &types.AttributeValueMemberN{Value: strconv.Itoa(shardId)},
+			"sort_key": &types.AttributeValueMemberS{Value: timerSortKey},
+		},
+		ConditionExpression: aws.String("attribute_exists(sort_key)"),
+	}
+
+	_, deleteErr := d.client.DeleteItem(ctx, deleteInput)
+	if deleteErr != nil {
+		if isConditionalCheckFailedException(deleteErr) {
+			// Timer doesn't exist
+			return databases.NewDbErrorNotExists("timer not found", deleteErr)
+		}
+		return databases.NewGenericDbError("failed to delete timer", deleteErr)
+	}
+
+	return nil
+}
+
 func (d *DynamoDBTimerStore) DeleteTimer(ctx context.Context, shardId int, shardVersion int64, namespace string, timerId string) *databases.DbError {
 	// Construct the sort key for the timer
 	timerSortKey := GetTimerSortKey(namespace, timerId)

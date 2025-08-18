@@ -1031,3 +1031,89 @@ func (c *MongoDBTimerStore) DeleteTimer(ctx context.Context, shardId int, shardV
 
 	return dbErr
 }
+
+func (c *MongoDBTimerStore) UpdateTimerNoLock(ctx context.Context, shardId int, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
+	// Serialize payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON interface{}
+
+	if request.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(request.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadJSON = string(payloadBytes)
+	}
+
+	if request.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(request.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyJSON = string(retryPolicyBytes)
+	}
+
+	// Update timer without shard version check or transaction
+	timerFilter := bson.M{
+		"shard_id":        shardId,
+		"row_type":        databases.RowTypeTimer,
+		"timer_namespace": namespace,
+		"timer_id":        request.TimerId,
+	}
+
+	// Build update document
+	updateDoc := bson.M{
+		"timer_execute_at":               request.ExecuteAt,
+		"timer_callback_url":             request.CallbackUrl,
+		"timer_callback_timeout_seconds": request.CallbackTimeoutSeconds,
+	}
+
+	// Update UUID fields (we regenerate the UUID for consistency)
+	timerUuid := databases.GenerateTimerUUID(namespace, request.TimerId)
+	updateDoc["timer_uuid"] = timerUuid
+
+	if payloadJSON != nil {
+		updateDoc["timer_payload"] = payloadJSON
+	} else {
+		updateDoc["timer_payload"] = nil
+	}
+
+	if retryPolicyJSON != nil {
+		updateDoc["timer_retry_policy"] = retryPolicyJSON
+	} else {
+		updateDoc["timer_retry_policy"] = nil
+	}
+
+	update := bson.M{"$set": updateDoc}
+	result, updateErr := c.collection.UpdateOne(ctx, timerFilter, update)
+	if updateErr != nil {
+		return databases.NewGenericDbError("failed to update timer", updateErr)
+	}
+
+	if result.MatchedCount == 0 {
+		return databases.NewDbErrorNotExists("timer not found during update", nil)
+	}
+
+	return nil
+}
+
+func (c *MongoDBTimerStore) DeleteTimerNoLock(ctx context.Context, shardId int, namespace string, timerId string) *databases.DbError {
+	// Delete timer without shard version check or transaction
+	timerFilter := bson.M{
+		"shard_id":        shardId,
+		"row_type":        databases.RowTypeTimer,
+		"timer_namespace": namespace,
+		"timer_id":        timerId,
+	}
+
+	result, deleteErr := c.collection.DeleteOne(ctx, timerFilter)
+	if deleteErr != nil {
+		return databases.NewGenericDbError("failed to delete timer", deleteErr)
+	}
+
+	// Check if any document was actually deleted
+	if result.DeletedCount == 0 {
+		return databases.NewDbErrorNotExists("timer not found for deletion", nil)
+	}
+
+	return nil
+}

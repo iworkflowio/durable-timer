@@ -818,3 +818,82 @@ func (c *MySQLTimerStore) DeleteTimer(ctx context.Context, shardId int, shardVer
 
 	return nil
 }
+
+func (c *MySQLTimerStore) UpdateTimerNoLock(ctx context.Context, shardId int, namespace string, request *databases.UpdateDbTimerRequest) (err *databases.DbError) {
+	// Serialize payload and retry policy to JSON
+	var payloadJSON, retryPolicyJSON interface{}
+
+	if request.Payload != nil {
+		payloadBytes, marshalErr := json.Marshal(request.Payload)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer payload", marshalErr)
+		}
+		payloadJSON = string(payloadBytes)
+	}
+
+	if request.RetryPolicy != nil {
+		retryPolicyBytes, marshalErr := json.Marshal(request.RetryPolicy)
+		if marshalErr != nil {
+			return databases.NewGenericDbError("failed to marshal timer retry policy", marshalErr)
+		}
+		retryPolicyJSON = string(retryPolicyBytes)
+	}
+
+	// Generate the new UUID from the request
+	newTimerUuid := databases.GenerateTimerUUID(namespace, request.TimerId)
+
+	// Update timer without locking or shard version check
+	updateQuery := `UPDATE timers 
+	                SET timer_execute_at = ?, timer_uuid = ?, 
+	                    timer_callback_url = ?, timer_payload = ?, timer_retry_policy = ?, 
+	                    timer_callback_timeout_seconds = ?, timer_attempts = 0
+	                WHERE shard_id = ? AND row_type = ? AND timer_namespace = ? AND timer_id = ?`
+
+	result, updateErr := c.db.ExecContext(ctx, updateQuery,
+		request.ExecuteAt, newTimerUuid[:],
+		request.CallbackUrl, payloadJSON, retryPolicyJSON,
+		request.CallbackTimeoutSeconds,
+		shardId, databases.RowTypeTimer, namespace, request.TimerId)
+
+	if updateErr != nil {
+		return databases.NewGenericDbError("failed to update timer", updateErr)
+	}
+
+	// Check if any rows were affected
+	rowsAffected, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		return databases.NewGenericDbError("failed to get rows affected", rowsErr)
+	}
+
+	if rowsAffected == 0 {
+		// Timer doesn't exist
+		return databases.NewDbErrorNotExists("timer not found for update", nil)
+	}
+
+	return nil
+}
+
+func (c *MySQLTimerStore) DeleteTimerNoLock(ctx context.Context, shardId int, namespace string, timerId string) *databases.DbError {
+	// Delete timer without locking or shard version check
+	deleteQuery := `DELETE FROM timers 
+	                WHERE shard_id = ? AND row_type = ? AND timer_namespace = ? AND timer_id = ?`
+
+	result, deleteErr := c.db.ExecContext(ctx, deleteQuery, shardId, databases.RowTypeTimer, namespace, timerId)
+
+	if deleteErr != nil {
+		return databases.NewGenericDbError("failed to delete timer", deleteErr)
+	}
+
+	// Check if any rows were affected
+	rowsAffected, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		return databases.NewGenericDbError("failed to get rows affected", rowsErr)
+	}
+
+	if rowsAffected == 0 {
+		// Timer doesn't exist
+		return databases.NewDbErrorNotExists("timer not found for deletion", nil)
+	}
+
+	return nil
+}
