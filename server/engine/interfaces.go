@@ -91,8 +91,7 @@ func NewCallbackProcessor(
 	processingChannel <-chan *databases.DbTimer, // the receive-only channel to receive the fired timer from the timer queue to be processed
 	processingCompletedChannel chan<- *databases.DbTimer, // the send-only channel to send the completed timer to the timer queue
 ) (CallbackProcessor, error) {
-	// TODO: implement
-	return nil, nil
+	return newCallbackProcessorImpl(config, logger, processingChannel, processingCompletedChannel)
 }
 
 // TimerBatchReader should be one instance per shard

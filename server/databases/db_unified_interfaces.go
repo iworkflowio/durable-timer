@@ -24,17 +24,27 @@ type (
 			metadata ShardMetadata,
 		) (err *DbError)
 
-		CreateTimer(
+		GetTimer(
 			ctx context.Context,
-			shardId int, shardVersion int64, namespace string,
-			timer *DbTimer,
-		) (err *DbError)
+			shardId int, namespace string, timerId string,
+		) (timer *DbTimer, err *DbError)
 
 		CreateTimerNoLock(
 			ctx context.Context,
 			shardId int, namespace string,
 			timer *DbTimer,
 		) (err *DbError)
+
+		UpdateTimerNoLock(
+			ctx context.Context,
+			shardId int, namespace string,
+			request *UpdateDbTimerRequest,
+		) (err *DbError)
+
+		DeleteTimerNoLock(
+			ctx context.Context,
+			shardId int, namespace string, timerId string,
+		) *DbError
 
 		RangeGetTimers(
 			ctx context.Context,
@@ -43,6 +53,7 @@ type (
 		) (*RangeGetTimersResponse, *DbError)
 
 		// RangeDeleteWithBatchInsertTxn is a transaction that deletes timers in a range and inserts new timers
+		// TODO: remove this
 		RangeDeleteWithBatchInsertTxn(
 			ctx context.Context,
 			shardId int, shardVersion int64,
@@ -50,7 +61,7 @@ type (
 			TimersToInsert []*DbTimer,
 		) (*RangeDeleteTimersResponse, *DbError)
 
-		// RangeDeleteWithLimit is a non-transactional operation that deletes timers in a range 
+		// RangeDeleteWithLimit is a non-transactional operation that deletes timers in a range
 		RangeDeleteWithLimit(
 			ctx context.Context,
 			shardId int,
@@ -58,33 +69,24 @@ type (
 			limit int, // Note that some distributed databases like Cassandra/MongoDB/DynamoDB don't support multiple range queries with LIMIT, so it may be ignored
 		) (*RangeDeleteTimersResponse, *DbError)
 
+		// TODO: only used in speical case (time skew)
 		UpdateTimer(
 			ctx context.Context,
 			shardId int, shardVersion int64, namespace string,
 			request *UpdateDbTimerRequest,
 		) (err *DbError)
 
-
-		GetTimer(
-			ctx context.Context,
-			shardId int, namespace string, timerId string,
-		) (timer *DbTimer, err *DbError)
-
+		// TODO: only used in speical case (time skew)
 		DeleteTimer(
 			ctx context.Context,
 			shardId int, shardVersion int64, namespace string, timerId string,
 		) *DbError
 
-		UpdateTimerNoLock(
+		// TODO: only used in speical case (time skew)
+		CreateTimer(
 			ctx context.Context,
-			shardId int, namespace string,
-			request *UpdateDbTimerRequest,
+			shardId int, shardVersion int64, namespace string,
+			timer *DbTimer,
 		) (err *DbError)
-
-
-		DeleteTimerNoLock(
-			ctx context.Context,
-			shardId int, namespace string, timerId string,
-		) *DbError
 	}
 )
