@@ -45,6 +45,7 @@ type (
 
 	// DbTimer is the timer model stored in DB
 	DbTimer struct {
+		ShardId      int // TODO: implment this in DB layer
 
 		// Unique identifier for the timer
 		Id string

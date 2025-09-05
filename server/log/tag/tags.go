@@ -91,36 +91,6 @@ func WorkflowType(wfType string) Tag {
 	return newStringTag("wf-type", wfType)
 }
 
-// WorkflowState returns tag for WorkflowState
-func WorkflowState(s int) Tag {
-	return newInt("wf-state", s)
-}
-
-// WorkflowRunID returns tag for WorkflowRunID
-func WorkflowRunID(runID string) Tag {
-	return newStringTag("wf-run-id", runID)
-}
-
-// WorkflowResetBaseRunID returns tag for WorkflowResetBaseRunID
-func WorkflowResetBaseRunID(runID string) Tag {
-	return newStringTag("wf-reset-base-run-id", runID)
-}
-
-// WorkflowResetNewRunID returns tag for WorkflowResetNewRunID
-func WorkflowResetNewRunID(runID string) Tag {
-	return newStringTag("wf-reset-new-run-id", runID)
-}
-
-// WorkflowBinaryChecksum returns tag for WorkflowBinaryChecksum
-func WorkflowBinaryChecksum(cs string) Tag {
-	return newStringTag("wf-binary-checksum", cs)
-}
-
-// WorkflowActivityID returns tag for WorkflowActivityID
-func WorkflowActivityID(id string) Tag {
-	return newStringTag("wf-activity-id", id)
-}
-
 // OperationName returns tag for OperationName
 func OperationName(operationName string) Tag {
 	return newStringTag("operation-name", operationName)
@@ -143,12 +113,10 @@ func Env(env string) Tag {
 	return newStringTag("env", env)
 }
 
-
 // NodeName return tag for node name
 func NodeName(nodeName string) Tag {
 	return newStringTag("node-name", nodeName)
 }
-
 
 // Key returns tag for Key
 func Key(k string) Tag {
@@ -160,11 +128,20 @@ func Name(k string) Tag {
 	return newStringTag("name", k)
 }
 
+// Namespace returns tag for Namespace
+func Namespace(k string) Tag {
+	return newStringTag("namespace", k)
+}
+
+// TimerId returns tag for TimerId
+func TimerId(k string) Tag {
+	return newStringTag("timer-id", k)
+}
+
 // Value returns tag for Value
 func Value(v interface{}) Tag {
 	return newObjectTag("value", v)
 }
-
 
 // Current returns tag for Current
 func Current(v interface{}) Tag {

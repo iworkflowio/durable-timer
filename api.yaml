@@ -223,7 +223,6 @@ components:
           type: string
           description: Unique identifier for the timer within the namespace (used for deduplication)
           example: "user-notification-123"
-          maxLength: 255
         executeAt:
           type: string
           format: date-time
@@ -234,7 +233,6 @@ components:
           format: uri
           description: HTTP URL to call when the timer executes, returning 200 with CallbackResponse means success, 4xx means invalid timer and no retry, otherwise will be retried.
           example: "https://api.example.com/webhooks/timer"
-          maxLength: 2048
         payload:
           type: object
           description: Custom JSON payload to include in the callback
@@ -258,7 +256,9 @@ components:
         nextExecuteAt:
           type: string
           format: date-time
-          description: ISO 8601 timestamp when the timer should execute next time. Only valid when ok is false.
+          description: |
+            ISO 8601 timestamp when the timer should execute next time. Only valid when ok is false.
+            The retry policy will be reset to the initial attempt(since executeAt is changed)
           example: "2024-12-20T15:30:00Z"
 
     UpdateTimerRequest:
@@ -278,14 +278,13 @@ components:
         executeAt:
           type: string
           format: date-time
-          description: New execution time for the timer
+          description: New execution time for the timer. If provided, the retry policy will be reset to the initial attempt.
           example: "2024-12-21T15:30:00Z"
         callbackUrl:
           type: string
           format: uri
           description: New callback URL, returning 200 with CallbackResponse means success, 4xx means invalid timer and no retry, otherwise will be retried.
           example: "https://api.example.com/webhooks/timer-updated"
-          maxLength: 2048
         payload:
           type: object
           description: New payload data
@@ -317,7 +316,7 @@ components:
         executeAt:
           type: string
           format: date-time
-          description: When the timer is scheduled to execute
+          description: When the timer is scheduled to execute as the first attempt.
           example: "2024-12-20T15:30:00Z"
         callbackUrl:
           type: string
@@ -349,7 +348,7 @@ components:
         executedAt:
           type: string
           format: date-time
-          description: When the timer was executed (if applicable)
+          description: When the timer was executed and the callback failed (if applicable)
           example: "2024-12-20T15:30:05Z"
 
     RetryPolicy:
